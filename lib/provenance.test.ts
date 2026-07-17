@@ -126,6 +126,31 @@ function coversOnly(
   assert(m != null && m.page === 1, "multi-page: match reports the correct page index");
 }
 
+// --- multi-line value splits into one tight rect per line -------------------
+{
+  const l1 = [word("6304", 1, 3), word("GROVER", 2, 3), word("AVE", 3, 3)];
+  const l2 = [word("AUSTIN", 1, 4), word("TX", 2, 4)];
+  const p = page([...l1, ...l2]);
+  const m = locateField([p], "6304 GROVER AVE AUSTIN TX", "text");
+  assert(m != null && m.rects.length === 2, "address: multi-line value yields one rect per line");
+}
+
+// --- same-line value spread across a cell splits at the gap -----------------
+{
+  const code = word("AA", 1, 6); // x0 0.1..0.18
+  const amount: WordBox = { text: "929.40", x0: 0.7, y0: 0.3, x1: 0.8, y1: 0.33 }; // same line, far right
+  const p = page([code, amount]);
+  const m = locateField([p], "AA 929.40", "text");
+  assert(m != null && m.rects.length === 2, "box 12: code + far amount split into two tight rects, not one wide box");
+}
+
+// --- adjacent same-line tokens stay a single rect ---------------------------
+{
+  const p = page([word("GROVER", 1, 0), word("AVE", 2, 0)]);
+  const m = locateField([p], "GROVER AVE", "text");
+  assert(m != null && m.rects.length === 1, "adjacent words on one line stay a single rect");
+}
+
 // --- no match returns null --------------------------------------------------
 {
   const p = page([word("Nothing", 0, 0), word("relevant", 1, 0), word("here", 2, 0)]);

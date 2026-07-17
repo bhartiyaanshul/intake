@@ -3,14 +3,33 @@
 // for preparer matching and review.
 
 export function maskSSN(value: string): string {
-  const digits = value.replace(/\D/g, "");
+  const trimmed = value.trim();
+  const digits = trimmed.replace(/\D/g, "");
+  // A full nine-digit SSN (typed or extracted) → keep only the last four.
   if (digits.length === 9) return `***-**-${digits.slice(-4)}`;
-  const lastFour = value.match(/(?:\*|X|x)+[-\s]?(?:\*|X|x)+[-\s]?(\d{4})$/)?.[1];
-  return lastFour ? `***-**-${lastFour}` : value;
+  // An already-masked value. Source forms mask SSNs with * or X and any
+  // separator (-, _, ., space, or none): "***-**-1234", "XXX_XX_6789",
+  // "***.**.****". Normalize to our canonical form.
+  if (/[*Xx]/.test(trimmed)) {
+    // Recover the last four if the mask still exposes them.
+    if (digits.length === 4) return `***-**-${digits}`;
+    // Fully masked with nothing to recover (e.g. "***_***_***").
+    if (digits.length === 0) return "***-**-****";
+  }
+  return value;
 }
 
+// Accepts our canonical masked SSN and the common on-form variants: * or X,
+// any of -, _, ., space, or no separator, and either the last four digits or a
+// fully-masked tail.
 export function isMaskedSSN(value: string): boolean {
-  return /^(?:\*{3,4}|X{3,4})[-\s]?(?:\*{2}|X{2})[-\s]?\d{4}$/i.test(value.trim());
+  return /^[*Xx]{3,4}[-_.\s]?[*Xx]{2}[-_.\s]?(?:\d{4}|[*Xx]{4})$/.test(value.trim());
+}
+
+// A masked SSN whose last four digits are not recoverable from the document —
+// the preparer must supply the taxpayer's SSN before filing.
+export function isFullyMaskedSSN(value: string): boolean {
+  return isMaskedSSN(value) && !/\d/.test(value);
 }
 
 // DECISION: only redact unambiguous SSN patterns and values next to an SSN

@@ -63,6 +63,14 @@ assert(!isValidSSN("12-3456"), "short SSN invalid");
 assert(!isValidSSN("000-1-3456"), "malformed SSN invalid");
 assert(isValidSSN("***-**-5597"), "masked SSN valid for privacy-preserving review");
 assert(maskSSN("123-45-6789") === "***-**-6789", "full SSN is normalized to masked form");
+// Source forms mask SSNs with varied separators / fully masked — must normalize
+// and validate so review isn't permanently blocked (real Schwab/ADP W-2 copies).
+assert(maskSSN("***_***_***") === "***-**-****", "fully-masked underscore SSN normalizes to canonical");
+assert(maskSSN("XXX_XX_6789") === "***-**-6789", "underscore-masked SSN recovers last four");
+assert(isValidSSN("***-**-****"), "fully-masked SSN is a valid format (not a blocking error)");
+assert(isValidSSN(maskSSN("***_***_***")), "normalized fully-masked SSN passes validation");
+assert(!hasFlag("W-2", [fld("employee_ssn", "***-**-****"), fld("employer_ein", "12-3456789"), fld("employer_name", "X"), fld("employee_name", "Y"), fld("box1_wages", "100"), fld("tax_year", "2024")], "employee_ssn", "error"), "fully-masked SSN does not raise a blocking error");
+assert(hasFlag("W-2", [fld("employee_ssn", "***-**-****"), fld("employer_ein", "12-3456789"), fld("employer_name", "X"), fld("employee_name", "Y"), fld("box1_wages", "100"), fld("tax_year", "2024")], "employee_ssn", "warn"), "fully-masked SSN raises a verify warning");
 assert(!redactSSNsInOcrText("Employee SSN 123-45-6789").includes("123-45-6789"), "OCR prompt redacts formatted SSNs");
 assert(isValidEIN("12-3456789"), "dashed EIN valid");
 assert(isValidEIN("123456789"), "9-digit EIN valid");

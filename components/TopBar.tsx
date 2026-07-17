@@ -1,6 +1,12 @@
-// Dark ink top bar — app identity + descriptor + validation-rules entry point.
+// Dark ink top bar — app identity + descriptor + tour / validation-rules entry points.
 
-export function TopBar({ onOpenRules }: { onOpenRules?: () => void }) {
+export function TopBar({
+  onOpenRules,
+  onOpenTour,
+}: {
+  onOpenRules?: () => void;
+  onOpenTour?: () => void;
+}) {
   return (
     <header className="flex items-center justify-between bg-ink px-5 py-3 text-paper">
       <div className="flex items-baseline gap-3">
@@ -14,6 +20,20 @@ export function TopBar({ onOpenRules }: { onOpenRules?: () => void }) {
           <span className="h-1.5 w-1.5 rounded-full bg-ledger" aria-hidden />
           Browser-side OCR · nothing stored
         </span>
+        {onOpenTour && (
+          <button
+            type="button"
+            onClick={onOpenTour}
+            className="flex items-center gap-1.5 rounded-md border border-paper/20 px-2.5 py-1 text-xs font-medium text-paper/80 transition-colors hover:border-paper/40 hover:text-paper"
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden>
+              <circle cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="1.6" />
+              <path d="M12 11v5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+              <circle cx="12" cy="7.6" r="1" fill="currentColor" />
+            </svg>
+            Take a tour
+          </button>
+        )}
         {onOpenRules && (
           <button
             type="button"

@@ -38,7 +38,7 @@ moment a red validation flag turns green when a value is corrected.
 
 ## Supported forms
 
-W-2, 1099-NEC, 1099-INT, 1099-DIV, 1099-R, 1099-MISC, 1098, 1099-G, SSA-1099,
+W-2, 1099-NEC, 1099-INT, 1099-DIV, 1099-R, 1099-MISC, 1099-SA, 1098, 1099-G, SSA-1099,
 Schedule K-1 (1065, 1120-S, 1041), 1098-E, 1098-T, charitable donation receipts,
 and an `UNKNOWN`
 fallback that does generic key/value extraction and labels the document

@@ -46,6 +46,7 @@ export const RULES: RuleMeta[] = [
   // format & presence
   { id: "required_field", label: "Required field present", description: "A field the form always carries (TINs, primary income box, tax year) must not be empty.", group: "format", severity: "error" },
   { id: "ssn_format", label: "SSN format", description: "SSN fields must read as XXX-XX-XXXX or 9 digits.", group: "format", severity: "error" },
+  { id: "ssn_fully_masked", label: "SSN fully masked", description: "The document masks the entire SSN (no last four) — the preparer must supply it before filing.", group: "format", severity: "warn" },
   { id: "ein_format", label: "EIN / TIN format", description: "EIN fields must read as XX-XXXXXXX or 9 digits.", group: "format", severity: "error" },
   { id: "money_format", label: "Money parses", description: "Dollar amounts must parse as a number after stripping $ and commas.", group: "format", severity: "error" },
   { id: "percent_format", label: "Percentage parses", description: "Percentage fields (K-1 ownership) must parse as a number.", group: "format", severity: "error" },

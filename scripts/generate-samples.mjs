@@ -70,7 +70,7 @@ function drawW2({ badBox4 = false } = {}) {
   const fullW = W - M * 2;
 
   text(ctx, M, 70, "Form W-2  Wage and Tax Statement", "bold 32px Arial");
-  text(ctx, W - M - 120, 70, "2024", "bold 30px Arial");
+  text(ctx, W - M - 120, 70, "2025", "bold 30px Arial");
   text(ctx, M, 100, "Department of the Treasury — Internal Revenue Service", "15px Arial", "#444");
 
   // employee SSN + EIN row
@@ -81,9 +81,9 @@ function drawW2({ badBox4 = false } = {}) {
   box(ctx, M, 210, fullW / 2 - 10, 130,
     "c  Employer's name, address, and ZIP code",
     "");
-  text(ctx, M + 14, 262, "Northwind Trading Co.", "22px Arial");
+  text(ctx, M + 14, 262, "Sample Retirement Services Inc.", "22px Arial");
   text(ctx, M + 14, 292, "1420 Cedar Street", "20px Arial");
-  text(ctx, M + 14, 320, "Portland, OR 97204", "20px Arial");
+  text(ctx, M + 14, 320, "Austin, TX 78701", "20px Arial");
 
   // wages boxes 1-2
   const rx = M + fullW / 2 + 10;
@@ -97,9 +97,9 @@ function drawW2({ badBox4 = false } = {}) {
 
   // employee name/address
   box(ctx, M, 350, fullW / 2 - 10, 130, "e  Employee's name, address, and ZIP code", "");
-  text(ctx, M + 14, 402, "Miriam A. Callahan", "22px Arial");
+  text(ctx, M + 14, 402, "Taylor M. Sample", "22px Arial");
   text(ctx, M + 14, 432, "88 Larkspur Lane", "20px Arial");
-  text(ctx, M + 14, 460, "Beaverton, OR 97005", "20px Arial");
+  text(ctx, M + 14, 460, "Austin, TX 78704", "20px Arial");
 
   box(ctx, rx, 350, rw / 2 - 5, 65, "5  Medicare wages and tips", "62,400.00", { big: true });
   box(ctx, rx + rw / 2 + 5, 350, rw / 2 - 5, 65, "6  Medicare tax withheld", "904.80", { big: true });
@@ -112,7 +112,7 @@ function drawW2({ badBox4 = false } = {}) {
 
   // state block, boxes 15-20
   const sy = 600;
-  box(ctx, M, sy, 140, 70, "15  State", "OR");
+  box(ctx, M, sy, 140, 70, "15  State", "TX");
   box(ctx, M + 140, sy, 260, 70, "Employer's state ID number", "9988776-01");
   box(ctx, M + 400, sy, 250, 70, "16  State wages, tips, etc.", "62,400.00", { big: true });
   box(ctx, M + 650, sy, 250, 70, "17  State income tax", "4,120.00", { big: true });
@@ -121,7 +121,7 @@ function drawW2({ badBox4 = false } = {}) {
   box(ctx, M, sy + 80, 300, 70, "19  Local income tax", "");
   box(ctx, M + 300, sy + 80, 300, 70, "20  Locality name", "");
 
-  text(ctx, M, sy + 210, "This is a synthetic sample document for demonstration. All names and numbers are fictional.", "15px Arial", "#666");
+  text(ctx, M, sy + 210, "SYNTHETIC DEMO ONLY — all names, addresses, and TINs are fictional.", "bold 15px Arial", "#666");
 
   return canvas;
 }
@@ -202,10 +202,85 @@ function draw1099INT() {
   return canvas;
 }
 
+// --- 1099-R ---------------------------------------------------------------
+
+function draw1099R({ ira = false } = {}) {
+  const { canvas, ctx } = newPage();
+  const M = 60;
+  const fullW = W - M * 2;
+  const gross = ira ? "24,860.00" : "58,568.40";
+  const withholding = ira ? "2,486.00" : "8,791.08";
+  const code = ira ? "7" : "7";
+
+  text(ctx, M, 70, "Form 1099-R", "bold 32px Arial");
+  text(ctx, M, 100, "Distributions From Pensions, Annuities, Retirement Plans, IRAs, and Insurance Contracts", "18px Arial");
+  text(ctx, W - M - 120, 70, "2025", "bold 30px Arial");
+
+  box(ctx, M, 130, fullW / 2 - 10, 150, "PAYER'S name, street address, city, state, ZIP", "");
+  text(ctx, M + 14, 178, ira ? "Summit IRA Custody LLC" : "Sample Employees Retirement System", "21px Arial");
+  text(ctx, M + 14, 208, "P.O. Box 13207", "20px Arial");
+  text(ctx, M + 14, 236, "Austin, TX 78711", "20px Arial");
+
+  const rx = M + fullW / 2 + 10;
+  const rw = fullW / 2 - 10;
+  box(ctx, rx, 130, rw / 2 - 5, 75, "1  Gross distribution", gross, { big: true });
+  box(ctx, rx + rw / 2 + 5, 130, rw / 2 - 5, 75, "2a  Taxable amount", gross, { big: true });
+  box(ctx, rx, 205, rw / 2 - 5, 75, "2b  Taxable amount not determined", "");
+  box(ctx, rx + rw / 2 + 5, 205, rw / 2 - 5, 75, "4  Federal income tax withheld", withholding, { big: true });
+
+  box(ctx, M, 290, fullW / 2 - 10, 70, "PAYER'S TIN", ira ? "84-1776442" : "74-6000098", { big: true });
+  box(ctx, M + fullW / 2 + 10, 290, fullW / 2 - 10, 70, "RECIPIENT'S TIN", "412-42-8817", { big: true });
+  box(ctx, M, 370, fullW / 2 - 10, 130, "RECIPIENT'S name and address", "");
+  text(ctx, M + 14, 420, "Taylor M. Sample", "22px Arial");
+  text(ctx, M + 14, 450, "88 Larkspur Lane", "20px Arial");
+  text(ctx, M + 14, 478, "Austin, TX 78704", "20px Arial");
+  box(ctx, rx, 370, rw / 2 - 5, 70, "7  Distribution code(s)", code, { big: true });
+  box(ctx, rx + rw / 2 + 5, 370, rw / 2 - 5, 70, "IRA / SEP / SIMPLE", ira ? "X" : "", { big: true });
+  box(ctx, rx, 440, rw / 2 - 5, 70, "14  State tax withheld", "0.00", { big: true });
+  box(ctx, rx + rw / 2 + 5, 440, rw / 2 - 5, 70, "15  State / Payer's state no.", "TX / 9988776", { big: true });
+
+  text(ctx, M, 570, "SYNTHETIC DEMO ONLY — fictional retirement distribution sample.", "bold 15px Arial", "#666");
+  return canvas;
+}
+
+// --- 1099-SA --------------------------------------------------------------
+
+function draw1099SA() {
+  const { canvas, ctx } = newPage();
+  const M = 60;
+  const fullW = W - M * 2;
+
+  text(ctx, M, 70, "Form 1099-SA", "bold 32px Arial");
+  text(ctx, M, 100, "Distributions From an HSA, Archer MSA, or Medicare Advantage MSA", "19px Arial");
+  text(ctx, W - M - 120, 70, "2025", "bold 30px Arial");
+
+  box(ctx, M, 130, fullW / 2 - 10, 150, "TRUSTEE'S/PAYER'S name, street address, city, state, ZIP", "");
+  text(ctx, M + 14, 178, "Sample Health Bank", "22px Arial");
+  text(ctx, M + 14, 208, "P.O. Box 271629", "20px Arial");
+  text(ctx, M + 14, 236, "Salt Lake City, UT 84127", "20px Arial");
+  const rx = M + fullW / 2 + 10;
+  const rw = fullW / 2 - 10;
+  box(ctx, rx, 130, rw / 2 - 5, 75, "1  Gross distribution", "5,800.11", { big: true });
+  box(ctx, rx + rw / 2 + 5, 130, rw / 2 - 5, 75, "2  Earnings on excess contrib.", "0.00", { big: true });
+  box(ctx, rx, 205, rw / 2 - 5, 75, "3  Distribution code", "1", { big: true });
+  box(ctx, rx + rw / 2 + 5, 205, rw / 2 - 5, 75, "4  FMV on date of death", "", { big: true });
+  box(ctx, M, 290, fullW / 2 - 10, 70, "PAYER'S federal identification number", "47-0812345", { big: true });
+  box(ctx, M + fullW / 2 + 10, 290, fullW / 2 - 10, 70, "RECIPIENT'S identification number", "412-42-8817", { big: true });
+  box(ctx, M, 370, fullW / 2 - 10, 130, "RECIPIENT'S name and address", "");
+  text(ctx, M + 14, 420, "Taylor M. Sample", "22px Arial");
+  text(ctx, M + 14, 450, "88 Larkspur Lane", "20px Arial");
+  text(ctx, M + 14, 478, "Austin, TX 78704", "20px Arial");
+  box(ctx, rx, 370, rw, 55, "5  Account type", "HSA: X    Archer MSA:     MA MSA:", { big: true });
+  box(ctx, rx, 425, rw, 75, "Account number (see instructions)", "HSA-00012758", { big: true });
+  text(ctx, M, 570, "SYNTHETIC DEMO ONLY — fictional HSA distribution sample.", "bold 15px Arial", "#666");
+  return canvas;
+}
+
 // --- run --------------------------------------------------------------------
 
-save(drawW2({ badBox4: false }), "w2-clean.png");
-save(drawW2({ badBox4: true }), "w2-box4-error.png");
-save(draw1099NEC(), "1099-nec.png");
-save(draw1099INT(), "1099-int.png");
+save(drawW2({ badBox4: false }), "2025-w2-clean.png");
+save(drawW2({ badBox4: true }), "2025-w2-box4-review.png");
+save(draw1099R({ ira: false }), "2025-1099-r-pension.png");
+save(draw1099R({ ira: true }), "2025-1099-r-ira.png");
+save(draw1099SA(), "2025-1099-sa-hsa.png");
 console.log("done");

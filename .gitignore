@@ -17,6 +17,9 @@
 # real client tax documents used for local testing — never commit (contains PII)
 /Data
 
+# local writeup notes (kept out of the repo)
+/WRITEUP.md
+
 # debug
 npm-debug.log*
 yarn-debug.log*

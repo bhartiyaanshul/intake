@@ -72,6 +72,48 @@ function unionRect(words: WordBox[]): SourceMatch["rects"][number] {
   return { x0, y0, x1, y1 };
 }
 
+// Turn the matched tokens into tight highlight boxes. A single union rectangle
+// over every token draws one huge box for multi-line values (an address) or
+// values spread across a cell (a Box 12 "AA   $929.40"), and can even bridge two
+// side-by-side form copies. Instead we group tokens into runs — same line AND
+// horizontally adjacent — and emit one rect per run, so the highlight hugs the
+// actual ink.
+function clusterRects(words: WordBox[]): SourceMatch["rects"] {
+  if (words.length <= 1) return words.map((w) => ({ x0: w.x0, y0: w.y0, x1: w.x1, y1: w.y1 }));
+  // Typical token height, used as the scale for "same line" and "adjacent" gaps.
+  const avgH =
+    words.reduce((s, w) => s + Math.max(0, w.y1 - w.y0), 0) / words.length || 0.012;
+  const midY = (w: WordBox) => (w.y0 + w.y1) / 2;
+
+  // 1. Group tokens into lines by vertical proximity (independent of x order, so
+  //    float noise in y can't swap a left/right token and fold two apart).
+  const lines: WordBox[][] = [];
+  for (const w of [...words].sort((a, b) => a.y0 - b.y0)) {
+    const line = lines.find((L) => Math.abs(midY(w) - midY(L[0])) <= avgH * 0.7);
+    if (line) line.push(w);
+    else lines.push([w]);
+  }
+
+  // 2. Within each line, split into runs wherever a horizontal gap is large
+  //    (a jump across a cell — e.g. a Box 12 code and its far-right amount).
+  const rects: SourceMatch["rects"] = [];
+  for (const line of lines) {
+    line.sort((a, b) => a.x0 - b.x0);
+    let run: WordBox[] = [line[0]];
+    for (let i = 1; i < line.length; i++) {
+      const w = line[i];
+      const prev = run[run.length - 1];
+      if (w.x0 - prev.x1 <= avgH * 2.5) run.push(w);
+      else {
+        rects.push(unionRect(run));
+        run = [w];
+      }
+    }
+    rects.push(unionRect(run));
+  }
+  return rects;
+}
+
 interface Best {
   page: number;
   words: WordBox[];
@@ -213,7 +255,7 @@ export function locateField(
   if (!best) return null;
   return {
     page: best.page,
-    rects: [unionRect(best.words)],
+    rects: clusterRects(best.words),
     // Cap at 1 — exact numeric matches carry a tiny tie-break bonus above 1.
     score: Math.min(1, best.score),
   };

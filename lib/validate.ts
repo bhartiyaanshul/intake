@@ -1,7 +1,7 @@
 import { getSchema } from "./schemas";
 import { einPrefixIssue, parseBox12Codes, ssnStructuralIssue, US_STATE_CODES, W2_BOX12_CODES } from "./reference";
 import { constantsForYear } from "./taxConstants";
-import { isMaskedSSN } from "./privacy";
+import { isFullyMaskedSSN, isMaskedSSN } from "./privacy";
 import { isRuleEnabled } from "./rules";
 import type { ExtractedField, FieldDef, FormType, IntakeDoc, ValidationFlag } from "./types";
 
@@ -36,6 +36,7 @@ function baseRules(fields: ExtractedField[], schema: FieldDef[]): ValidationFlag
   for (const f of fields) {
     const def = defs.get(f.key); const value = f.value.trim(); if (!def || !value) continue;
     if (def.type === "ssn" && !isValidSSN(value)) out.push(flag("ssn_format", f.key, "error", "Not a valid SSN - expected XXX-XX-XXXX or 9 digits."));
+    if (def.type === "ssn" && isFullyMaskedSSN(value)) out.push(flag("ssn_fully_masked", f.key, "warn", "SSN is fully masked on this document - enter the taxpayer's SSN before filing."));
     if (def.type === "ein" && !isValidEIN(value)) out.push(flag("ein_format", f.key, "error", "Not a valid EIN/TIN - expected XX-XXXXXXX or 9 digits."));
     if (def.type === "money" && parseMoney(value) == null) out.push(flag("money_format", f.key, "error", "Amount doesn't parse as a number."));
     if (def.type === "percent" && (parsePercent(value) == null)) out.push(flag("percent_format", f.key, "error", "Percentage doesn't parse as a number."));

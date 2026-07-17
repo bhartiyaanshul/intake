@@ -12,7 +12,7 @@ import { DocumentQueue } from "./DocumentQueue";
 import { ReviewWorkspace } from "./ReviewWorkspace";
 import { BottomBar } from "./BottomBar";
 import { validateBatch } from "@/lib/validate";
-import { WelcomeModal } from "./WelcomeModal";
+import { TourModal, hasSeenTour, markTourSeen } from "./TourModal";
 import { redactSSNsInOcrText } from "@/lib/privacy";
 import { RulesModal } from "./RulesModal";
 
@@ -20,12 +20,11 @@ import { RulesModal } from "./RulesModal";
 // these and runs them through the real OCR → extraction pipeline — no faked
 // results.
 const SAMPLE_FILES = [
-  "w2-clean.png",
-  "w2-box4-error.png",
-  "1099-nec.png",
-  "1099-int.png",
-  "ssa-1099-sample.svg",
-  "charitable-receipt-letter.svg",
+  "2025-w2-clean.png",
+  "2025-w2-box4-review.png",
+  "2025-1099-r-pension.png",
+  "2025-1099-r-ira.png",
+  "2025-1099-sa-hsa.png",
 ];
 
 function newDoc(file: File): IntakeDoc {
@@ -48,6 +47,18 @@ export function IntakeApp() {
   const [loadingSamples, setLoadingSamples] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [rulesOpen, setRulesOpen] = useState(false);
+  const [tourOpen, setTourOpen] = useState(false);
+
+  // Show the guided tour automatically on the first visit; afterwards it's
+  // available on demand from the top bar. Persisted so it doesn't nag on reload.
+  useEffect(() => {
+    if (!hasSeenTour()) setTourOpen(true);
+  }, []);
+
+  const closeTour = useCallback(() => {
+    setTourOpen(false);
+    markTourSeen();
+  }, []);
 
   // When the preparer toggles validation rules, re-derive every document's flags
   // and status so the UI reflects the change immediately.
@@ -189,8 +200,8 @@ export function IntakeApp() {
   if (state.docs.length === 0) {
     return (
       <div className="flex h-dvh flex-col">
-        <TopBar onOpenRules={() => setRulesOpen(true)} />
-        <WelcomeModal />
+        <TopBar onOpenRules={() => setRulesOpen(true)} onOpenTour={() => setTourOpen(true)} />
+        <TourModal open={tourOpen} onClose={closeTour} />
         <RulesModal open={rulesOpen} onClose={() => setRulesOpen(false)} />
         <main className="flex-1 overflow-auto">
           <DropZone
@@ -206,8 +217,8 @@ export function IntakeApp() {
   // Working state -------------------------------------------------------------
   return (
     <div className="flex h-dvh flex-col">
-      <TopBar onOpenRules={() => setRulesOpen(true)} />
-      <WelcomeModal />
+      <TopBar onOpenRules={() => setRulesOpen(true)} onOpenTour={() => setTourOpen(true)} />
+      <TourModal open={tourOpen} onClose={closeTour} />
       <RulesModal open={rulesOpen} onClose={() => setRulesOpen(false)} />
 
       <div className="flex min-h-0 flex-1">
