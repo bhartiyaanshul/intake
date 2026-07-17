@@ -1,0 +1,81 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --paper: #f6f7f4;
+  --ink: #15211b;
+  --ledger: #1e6e4a;
+  --amber: #b45309;
+  --danger: #b3261e;
+  --hairline: #dde2db;
+}
+
+html,
+body {
+  background: var(--paper);
+  color: var(--ink);
+  font-feature-settings: "cv05", "cv08";
+}
+
+/* Every number is content — tabular figures across the app. */
+.tnum {
+  font-family: var(--font-plex-mono), ui-monospace, monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Focus states are visible and consistent (keyboard flow matters here). */
+:focus-visible {
+  outline: 2px solid var(--ledger);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+/* Thin custom scrollbars that suit the ledger aesthetic. */
+.scroll-thin {
+  scrollbar-width: thin;
+  scrollbar-color: var(--hairline) transparent;
+}
+.scroll-thin::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+.scroll-thin::-webkit-scrollbar-thumb {
+  background: var(--hairline);
+  border-radius: 4px;
+}
+
+@keyframes shimmer {
+  100% {
+    transform: translateX(100%);
+  }
+}
+.skeleton {
+  position: relative;
+  overflow: hidden;
+  background: #eceee9;
+}
+.skeleton::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(255, 255, 255, 0.6),
+    transparent
+  );
+  animation: shimmer 1.4s infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+  .skeleton::after {
+    animation: none;
+  }
+}
