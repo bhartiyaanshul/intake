@@ -13,7 +13,7 @@
 // and never end up in the server bundle.
 
 import { Semaphore } from "./semaphore";
-import type { PageImage } from "./types";
+import type { PageImage, WordBox } from "./types";
 
 export const MAX_FILE_BYTES = 15 * 1024 * 1024; // 15 MB
 // DECISION: 50 chars is the text-layer-vs-scanned threshold. A born-digital PDF
@@ -80,16 +80,59 @@ async function getTesseractWorker(): Promise<any> {
   return tesseractWorkerPromise;
 }
 
+interface OcrCanvasResult {
+  text: string;
+  words: WordBox[];
+}
+
+// Pull per-word geometry out of Tesseract's block tree. Tesseract reports pixel
+// bboxes in the coordinate space of the canvas we handed it; we normalize by the
+// canvas dimensions so the boxes survive any later display scaling.
+function wordsFromTesseract(data: any, w: number, h: number): WordBox[] {
+  const out: WordBox[] = [];
+  const collect = (word: any) => {
+    const b = word?.bbox;
+    const text = (word?.text ?? "").trim();
+    if (!b || !text) return;
+    if (w <= 0 || h <= 0) return;
+    out.push({
+      text,
+      x0: b.x0 / w,
+      y0: b.y0 / h,
+      x1: b.x1 / w,
+      y1: b.y1 / h,
+    });
+  };
+  // v5 exposes words under blocks → paragraphs → lines → words. Fall back to a
+  // flat data.words array if a build provides one.
+  if (Array.isArray(data?.blocks)) {
+    for (const block of data.blocks) {
+      for (const para of block?.paragraphs ?? []) {
+        for (const line of para?.lines ?? []) {
+          for (const word of line?.words ?? []) collect(word);
+        }
+      }
+    }
+  } else if (Array.isArray(data?.words)) {
+    for (const word of data.words) collect(word);
+  }
+  return out;
+}
+
 async function ocrCanvas(
   canvas: HTMLCanvasElement,
   onProgress?: (p: number) => void,
-): Promise<string> {
+): Promise<OcrCanvasResult> {
   const worker = await getTesseractWorker();
   const release = await ocrMutex.acquire();
   activeProgress = onProgress ?? null;
   try {
-    const { data } = await worker.recognize(canvas);
-    return (data.text as string) ?? "";
+    // Request the block tree so we get word geometry, not just plain text.
+    const { data } = await worker.recognize(canvas, {}, { blocks: true });
+    return {
+      text: (data.text as string) ?? "",
+      words: wordsFromTesseract(data, canvas.width, canvas.height),
+    };
   } finally {
     activeProgress = null;
     release();
@@ -127,7 +170,7 @@ async function processImage(
   const canvas = await loadImageToCanvas(file);
   const dataUrl = canvas.toDataURL("image/png");
   onProgress({ percent: 10, stage: "Running OCR" });
-  const text = await ocrCanvas(canvas, (p) => {
+  const { text, words } = await ocrCanvas(canvas, (p) => {
     onProgress({
       percent: 10 + Math.round(p * 85),
       stage: `Running OCR (${Math.round(p * 100)}%)`,
@@ -136,7 +179,7 @@ async function processImage(
   onProgress({ percent: 100, stage: "OCR complete" });
   return {
     text,
-    pages: [{ dataUrl, width: canvas.width, height: canvas.height }],
+    pages: [{ dataUrl, width: canvas.width, height: canvas.height, words }],
   };
 }
 
@@ -150,6 +193,51 @@ async function getPdfjs() {
     import.meta.url,
   ).toString();
   return pdfjs;
+}
+
+// Derive per-word boxes from a single pdf.js text item. An item is a run of
+// glyphs sharing one transform; its `transform` matrix places the baseline start
+// in PDF user space, and `width`/`height` are in unscaled PDF units. We compose
+// with the viewport transform to land in device (canvas) pixels, then split the
+// run's own text into whitespace words, apportioning the run width by character
+// count so each word gets its own tight box. Coordinates are normalized 0..1.
+function wordsFromTextItem(
+  pdfjs: any,
+  item: any,
+  viewport: { transform: number[]; width: number; height: number; scale: number },
+): WordBox[] {
+  const str: string = item.str ?? "";
+  if (!str.trim()) return [];
+  const vw = viewport.width;
+  const vh = viewport.height;
+  if (vw <= 0 || vh <= 0) return [];
+
+  const tx = pdfjs.Util.transform(viewport.transform, item.transform);
+  const left = tx[4];
+  const fontHeight = Math.hypot(tx[2], tx[3]);
+  const baseline = tx[5];
+  const top = baseline - fontHeight;
+  const runWidth = (item.width ?? 0) * viewport.scale;
+  if (runWidth <= 0 || fontHeight <= 0) return [];
+
+  const y0 = top / vh;
+  const y1 = (top + fontHeight) / vh;
+  const perChar = runWidth / str.length; // width of one character in device px
+
+  const out: WordBox[] = [];
+  // Walk the run, tracking character offset so each word's x-range tracks its
+  // position within the run (this is what keeps a value inside "Wages 62,400.00"
+  // from lighting up the whole line).
+  const wordRe = /\S+/g;
+  let m: RegExpExecArray | null;
+  while ((m = wordRe.exec(str)) !== null) {
+    const start = m.index;
+    const end = start + m[0].length;
+    const x0 = (left + start * perChar) / vw;
+    const x1 = (left + end * perChar) / vw;
+    out.push({ text: m[0], x0, y0, x1, y1 });
+  }
+  return out;
 }
 
 async function processPdf(
@@ -191,13 +279,14 @@ async function processPdf(
     const ctx = canvas.getContext("2d");
     if (!ctx) throw new OcrError("Canvas not available in this browser.");
     await page.render({ canvasContext: ctx, viewport }).promise;
-    pages.push({
-      dataUrl: canvas.toDataURL("image/png"),
-      width: canvas.width,
-      height: canvas.height,
-    });
 
+    let words: WordBox[];
     if (layerText.length >= MIN_TEXT_LAYER_CHARS) {
+      // Text-layer path: derive word geometry from the same items we read text
+      // from, so provenance highlights are exact (no re-OCR of a digital page).
+      words = content.items.flatMap((it: any) =>
+        "str" in it ? wordsFromTextItem(pdfjs, it, viewport) : [],
+      );
       textParts.push(layerText);
     } else {
       // Scanned page — fall back to Tesseract on the rendered raster.
@@ -205,14 +294,22 @@ async function processPdf(
         percent: Math.round(base + span * 0.15),
         stage: `Scanned page ${i}/${numPages} — running OCR`,
       });
-      const ocrText = await ocrCanvas(canvas, (p) => {
+      const result = await ocrCanvas(canvas, (p) => {
         onProgress({
           percent: Math.round(base + span * (0.15 + p * 0.8)),
           stage: `OCR page ${i}/${numPages} (${Math.round(p * 100)}%)`,
         });
       });
-      textParts.push(ocrText);
+      textParts.push(result.text);
+      words = result.words;
     }
+
+    pages.push({
+      dataUrl: canvas.toDataURL("image/png"),
+      width: canvas.width,
+      height: canvas.height,
+      words,
+    });
 
     onProgress({
       percent: Math.round(base + span),

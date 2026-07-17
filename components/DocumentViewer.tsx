@@ -1,14 +1,24 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import type { IntakeDoc } from "@/lib/types";
+import { useEffect, useRef, useState } from "react";
+import type { IntakeDoc, SourceMatch } from "@/lib/types";
 
 // Source document viewer: rendered page image with zoom in/out and prev/next
-// page navigation for multi-page PDFs.
+// page navigation for multi-page PDFs. When a field is located (click-to-source
+// provenance), the matched region is overlaid on the page, the viewer jumps to
+// its page, and it scrolls into view with a brief pulse.
 
-export function DocumentViewer({ doc }: { doc: IntakeDoc }) {
+export function DocumentViewer({
+  doc,
+  highlight,
+}: {
+  doc: IntakeDoc;
+  highlight?: SourceMatch | null;
+}) {
   const [page, setPage] = useState(0);
   const [zoom, setZoom] = useState(1);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const highlightRef = useRef<HTMLDivElement>(null);
 
   // Reset paging/zoom when switching documents.
   useEffect(() => {
@@ -16,9 +26,29 @@ export function DocumentViewer({ doc }: { doc: IntakeDoc }) {
     setZoom(1);
   }, [doc.id]);
 
+  // Follow a new highlight: jump to its page, then scroll the box into view.
+  useEffect(() => {
+    if (!highlight) return;
+    setPage(Math.min(highlight.page, Math.max(0, doc.pages.length - 1)));
+  }, [highlight, doc.pages.length]);
+
+  useEffect(() => {
+    if (!highlight || highlight.page !== page) return;
+    // Wait a frame so the overlay is laid out before scrolling to it.
+    const id = requestAnimationFrame(() => {
+      highlightRef.current?.scrollIntoView({
+        behavior: "smooth",
+        block: "center",
+        inline: "center",
+      });
+    });
+    return () => cancelAnimationFrame(id);
+  }, [highlight, page]);
+
   const pages = doc.pages;
   const hasPages = pages.length > 0;
   const current = hasPages ? pages[Math.min(page, pages.length - 1)] : null;
+  const showHighlight = highlight && highlight.page === page;
 
   return (
     <div className="flex h-full flex-col bg-[#eceee9]">
@@ -66,15 +96,34 @@ export function DocumentViewer({ doc }: { doc: IntakeDoc }) {
         </div>
       </div>
 
-      <div className="scroll-thin flex-1 overflow-auto p-4">
+      <div ref={scrollRef} className="scroll-thin flex-1 overflow-auto p-4">
         {current ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={current.dataUrl}
-            alt={`${doc.fileName} — page ${page + 1}`}
-            className="mx-auto border border-hairline bg-white shadow-sm"
-            style={{ width: `${current.width * 0.5 * zoom}px`, maxWidth: "none" }}
-          />
+          <div
+            className="relative mx-auto border border-hairline bg-white shadow-sm"
+            style={{ width: `${current.width * 0.5 * zoom}px` }}
+          >
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={current.dataUrl}
+              alt={`${doc.fileName} — page ${page + 1}`}
+              className="block w-full"
+              style={{ maxWidth: "none" }}
+            />
+            {showHighlight &&
+              highlight.rects.map((r, i) => (
+                <div
+                  key={i}
+                  ref={i === 0 ? highlightRef : undefined}
+                  className="source-highlight pointer-events-none absolute rounded-[2px]"
+                  style={{
+                    left: `${r.x0 * 100}%`,
+                    top: `${r.y0 * 100}%`,
+                    width: `${(r.x1 - r.x0) * 100}%`,
+                    height: `${(r.y1 - r.y0) * 100}%`,
+                  }}
+                />
+              ))}
+          </div>
         ) : (
           <div className="flex h-full items-center justify-center text-center text-sm text-ink/40">
             {doc.status === "ocr" || doc.status === "queued"

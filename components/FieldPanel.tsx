@@ -30,11 +30,20 @@ export function FieldPanel({
   onEditField,
   onConfirm,
   onUnconfirm,
+  canLocate,
+  onLocate,
+  locatedKey,
+  locatedFound,
 }: {
   doc: IntakeDoc;
   onEditField: (key: string, value: string) => void;
   onConfirm: () => void;
   onUnconfirm: () => void;
+  // Click-to-source provenance: enabled only when OCR geometry is available.
+  canLocate: boolean;
+  onLocate: (key: string) => void;
+  locatedKey: string | null;
+  locatedFound: boolean;
 }) {
   const [showClean, setShowClean] = useState(false);
   const inputRefs = useRef<Map<string, HTMLInputElement>>(new Map());
@@ -105,6 +114,10 @@ export function FieldPanel({
       flags={r.flags}
       onChange={(v) => onEditField(r.field.key, v)}
       onEnterAdvance={() => advanceFrom(r.field.key)}
+      canLocate={canLocate}
+      onLocate={() => onLocate(r.field.key)}
+      isLocated={locatedKey === r.field.key}
+      locateFailed={locatedKey === r.field.key && !locatedFound}
     />
   );
 

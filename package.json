@@ -8,7 +8,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "test": "tsx lib/validate.test.ts",
+    "test": "tsx lib/validate.test.ts && tsx lib/provenance.test.ts",
     "samples": "tsx scripts/generate-samples.mjs"
   },
   "dependencies": {

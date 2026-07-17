@@ -369,6 +369,15 @@ assert(hasFlag("K-1", k1, "ending_capital", "error"), "K-1 1065 capital rollforw
 const charity = [fld("organization_name", "Good Works"), fld("donor_name", "Jane"), fld("donation_date", "2024-12-01"), fld("donation_type", "cash"), fld("cash_amount", "250"), fld("has_no_goods_or_services_statement", "false"), fld("tax_year", "2024")];
 assert(hasFlag("CHARITABLE_RECEIPT", charity, "has_no_goods_or_services_statement", "error"), "$250 charitable receipt missing acknowledgment -> error");
 
+const sa = [fld("payer_name", "Optum Bank"), fld("payer_tin", "12-3456789"), fld("recipient_name", "Jonathan Block"), fld("recipient_tin", "412-11-2222"), fld("box1_gross_distribution", "1500"), fld("box3_distribution_code", "1"), fld("account_type", "HSA"), fld("tax_year", "2025")];
+assert(!hasFlag("1099-SA", sa, "box3_distribution_code", "error"), "1099-SA valid distribution code 1 -> no error");
+const saBadCode = sa.map((f) => f.key === "box3_distribution_code" ? fld("box3_distribution_code", "9") : f);
+assert(hasFlag("1099-SA", saBadCode, "box3_distribution_code", "error"), "1099-SA distribution code 9 -> error");
+const saEarnings = [...sa, fld("box2_earnings_excess", "2000")];
+assert(hasFlag("1099-SA", saEarnings, "box2_earnings_excess", "warn"), "1099-SA Box 2 earnings > Box 1 gross -> warn");
+const saMissing = [fld("payer_name", "Optum Bank"), fld("box1_gross_distribution", "1500"), fld("tax_year", "2025")];
+assert(hasFlag("1099-SA", saMissing, "box3_distribution_code", "error"), "1099-SA missing required distribution code -> error");
+
 function doc(id: string, fields: ExtractedField[]): IntakeDoc { return { id, fileName: `${id}.png`, fileSize: 1, status: "clean", ocrProgress: 100, ocrText: "", pages: [], formType: "W-2", fields, flags: [] }; }
 const employer2 = cleanW2.map((f) => f.key === "employer_ein" ? fld("employer_ein", "13-4567890") : f.key === "box4_ss_tax" ? fld("box4_ss_tax", "6000") : f);
 const employer1 = cleanW2.map((f) => f.key === "box4_ss_tax" ? fld("box4_ss_tax", "6000") : f);

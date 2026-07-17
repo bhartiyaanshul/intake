@@ -69,6 +69,26 @@ body {
   animation: shimmer 1.4s infinite;
 }
 
+/* Click-to-source provenance: the located region on the scanned page. An amber
+   wash with a solid border reads as "here it is" without hiding the ink beneath;
+   a short pulse draws the eye on each new click. */
+.source-highlight {
+  background: rgba(180, 83, 9, 0.18);
+  border: 2px solid var(--amber);
+  box-shadow: 0 0 0 3px rgba(180, 83, 9, 0.15);
+  animation: source-pulse 1.1s ease-out;
+}
+@keyframes source-pulse {
+  0% {
+    background: rgba(180, 83, 9, 0.45);
+    box-shadow: 0 0 0 6px rgba(180, 83, 9, 0.28);
+  }
+  100% {
+    background: rgba(180, 83, 9, 0.18);
+    box-shadow: 0 0 0 3px rgba(180, 83, 9, 0.15);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   * {
     animation-duration: 0.001ms !important;

@@ -7,9 +7,11 @@ export const maxDuration = 60;
 
 const GROQ_URL = "https://api.groq.com/openai/v1/chat/completions";
 const DEFAULT_GROQ_MODEL = "llama-3.3-70b-versatile";
-const DEFAULT_GEMINI_MODEL = "gemini-2.5-flash-lite";
+// Use the "latest" alias so the fallback keeps working as Google retires dated
+// models — pinned IDs like gemini-2.5-flash-lite now 404 for new API keys.
+const DEFAULT_GEMINI_MODEL = "gemini-flash-lite-latest";
 const MAX_OCR_TEXT_CHARS = 35_000;
-const SUPPORTED: FormType[] = ["W-2", "1099-NEC", "1099-INT", "1099-DIV", "1099-R", "1099-MISC", "1098", "1099-G", "SSA-1099", "K-1", "1098-E", "1098-T", "CHARITABLE_RECEIPT", "UNKNOWN"];
+const SUPPORTED: FormType[] = ["W-2", "1099-NEC", "1099-INT", "1099-DIV", "1099-R", "1099-MISC", "1099-SA", "1098", "1099-G", "SSA-1099", "K-1", "1098-E", "1098-T", "CHARITABLE_RECEIPT", "UNKNOWN"];
 
 class ApiError extends Error { constructor(message: string, public status: number) { super(message); } }
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));

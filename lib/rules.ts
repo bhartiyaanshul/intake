@@ -73,6 +73,8 @@ export const RULES: RuleMeta[] = [
   { id: "1099_withholding_ratio", label: "1099 withholding sanity", description: "Federal withholding above 50% of the largest income box is unusual.", group: "1099", severity: "warn" },
   { id: "1099g_refund_year", label: "1099-G refund year present", description: "Box 3 refund tax year is required when a Box 2 state refund is reported.", group: "1099", severity: "error" },
   { id: "1099g_withholding", label: "1099-G withholding sanity", description: "Federal withholding exceeding total taxable amounts is flagged.", group: "1099", severity: "warn" },
+  { id: "1099sa_code_valid", label: "1099-SA distribution code", description: "1099-SA Box 3 distribution code must be 1–6.", group: "1099", severity: "error" },
+  { id: "1099sa_earnings_le_gross", label: "1099-SA earnings ≤ gross", description: "1099-SA Box 2 earnings on excess contributions normally shouldn't exceed Box 1 gross distribution.", group: "1099", severity: "warn" },
   // 1098 series
   { id: "1098_interest_vs_principal", label: "Mortgage interest vs principal", description: "1098 mortgage interest at or above outstanding principal is unusual.", group: "1098", severity: "warn" },
   { id: "1098e_cap", label: "Student-loan interest cap", description: "1098-E interest above the $2,500 deduction cap; excess isn't deductible.", group: "1098", severity: "warn" },

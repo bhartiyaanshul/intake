@@ -7,6 +7,7 @@ export type FormType =
   | "1099-DIV"
   | "1099-R"
   | "1099-MISC"
+  | "1099-SA"
   | "1098"
   | "1099-G"
   | "SSA-1099"
@@ -83,10 +84,34 @@ export type DocStatus =
   | "clean" // no flags
   | "confirmed";
 
+// One OCR token with geometry, used for click-to-source field provenance.
+// Coordinates are normalized to the page (0..1 of width/height) so they map
+// onto the rendered preview at any zoom level, independent of PREVIEW_SCALE.
+export interface WordBox {
+  text: string;
+  x0: number; // left, 0..1
+  y0: number; // top, 0..1
+  x1: number; // right, 0..1
+  y1: number; // bottom, 0..1
+}
+
 export interface PageImage {
   dataUrl: string;
   width: number;
   height: number;
+  // OCR word boxes for this page (text-layer or Tesseract). Absent on pages
+  // rendered before geometry capture landed / when OCR yields no tokens.
+  words?: WordBox[];
+}
+
+// Where an extracted field's value was found on the scanned page. `rects` is the
+// set of normalized token boxes that matched (usually one, more for multi-word
+// values); `score` is 0..1 match confidence. Produced client-side by the
+// provenance matcher (see lib/provenance.ts).
+export interface SourceMatch {
+  page: number; // index into IntakeDoc.pages
+  rects: { x0: number; y0: number; x1: number; y1: number }[];
+  score: number;
 }
 
 export interface IntakeDoc {

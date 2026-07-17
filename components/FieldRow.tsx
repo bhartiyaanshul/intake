@@ -37,9 +37,26 @@ export const FieldRow = forwardRef<
     required?: boolean;
     onChange: (value: string) => void;
     onEnterAdvance: () => void;
+    // Click-to-source provenance.
+    canLocate: boolean;
+    onLocate: () => void;
+    isLocated: boolean;
+    locateFailed: boolean;
   }
 >(function FieldRow(
-  { field, label, type, flags, required, onChange, onEnterAdvance },
+  {
+    field,
+    label,
+    type,
+    flags,
+    required,
+    onChange,
+    onEnterAdvance,
+    canLocate,
+    onLocate,
+    isLocated,
+    locateFailed,
+  },
   ref,
 ) {
   const rail = railColor(flags);
@@ -47,6 +64,8 @@ export const FieldRow = forwardRef<
   const confPct = Math.round(field.confidence * 100);
   // First flag that can compute a correct value drives the one-click fix.
   const suggestion = flags.find((f) => f.suggestedValue)?.suggestedValue;
+  // Locating needs both geometry and a value to search for.
+  const showLocate = canLocate && field.value.trim() !== "";
 
   return (
     <div className="relative flex gap-3 border-b border-hairline bg-white px-3 py-2.5 last:border-b-0">
@@ -66,6 +85,29 @@ export const FieldRow = forwardRef<
             {required && <span className="ml-0.5 text-danger">*</span>}
           </label>
           <div className="flex items-center gap-2">
+            {showLocate && (
+              <button
+                type="button"
+                onClick={onLocate}
+                aria-label="Show where this value appears on the page"
+                title="Show on scanned page"
+                className={`flex h-4 w-4 items-center justify-center rounded-sm transition ${
+                  isLocated
+                    ? "text-amber"
+                    : "text-ink/30 hover:text-ledger"
+                }`}
+              >
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" aria-hidden>
+                  <circle cx="12" cy="12" r="7" stroke="currentColor" strokeWidth="2" />
+                  <path
+                    d="M12 1v4M12 19v4M23 12h-4M5 12H1"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                  />
+                </svg>
+              </button>
+            )}
             {field.edited && (
               <>
                 <button
@@ -116,6 +158,13 @@ export const FieldRow = forwardRef<
             mono ? "tnum" : "font-sans"
           }`}
         />
+
+        {locateFailed && (
+          <p className="mt-1 text-[11px] leading-snug text-ink/45">
+            Couldn&apos;t pinpoint this value on the scanned page — it may be
+            reformatted or split across the layout. Verify manually.
+          </p>
+        )}
 
         {flags.length > 0 && (
           <ul className="mt-1 space-y-0.5">
