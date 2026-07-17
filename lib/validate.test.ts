@@ -7,9 +7,11 @@ import {
   isValidSSN,
   parseMoney,
   statusFromFlags,
+  validateBatch,
   validateDocument,
 } from "./validate";
-import type { ExtractedField, FormType } from "./types";
+import type { ExtractedField, FormType, IntakeDoc } from "./types";
+import { maskSSN, redactSSNsInOcrText } from "./privacy";
 
 let passed = 0;
 let failed = 0;
@@ -59,6 +61,9 @@ assert(isValidSSN("000-12-3456"), "dashed SSN valid");
 assert(isValidSSN("000123456"), "9-digit SSN valid");
 assert(!isValidSSN("12-3456"), "short SSN invalid");
 assert(!isValidSSN("000-1-3456"), "malformed SSN invalid");
+assert(isValidSSN("***-**-5597"), "masked SSN valid for privacy-preserving review");
+assert(maskSSN("123-45-6789") === "***-**-6789", "full SSN is normalized to masked form");
+assert(!redactSSNsInOcrText("Employee SSN 123-45-6789").includes("123-45-6789"), "OCR prompt redacts formatted SSNs");
 assert(isValidEIN("12-3456789"), "dashed EIN valid");
 assert(isValidEIN("123456789"), "9-digit EIN valid");
 assert(!isValidEIN("1-3456789"), "malformed EIN invalid");
@@ -352,6 +357,71 @@ assert(
   hasFlag("W-2", tipsOverBase, "box3_ss_wages", "error"),
   "SS wages + tips over wage base -> error",
 );
+
+// --- new form rules ---------------------------------------------------------
+console.log("new form rules");
+const ssa = [fld("beneficiary_name", "Jane Doe"), fld("beneficiary_ssn", "412-11-2222"), fld("box3_benefits_paid", "12000"), fld("box4_benefits_repaid", "500"), fld("box5_net_benefits", "11000"), fld("tax_year", "2024")];
+assert(hasFlag("SSA-1099", ssa, "box5_net_benefits", "error"), "SSA-1099 Box 5 identity mismatch -> error");
+const loan = [fld("lender_name", "Lender"), fld("lender_tin", "12-3456789"), fld("borrower_name", "Jane"), fld("borrower_ssn", "412-11-2222"), fld("box1_student_loan_interest", "3000"), fld("tax_year", "2024")];
+assert(hasFlag("1098-E", loan, "box1_student_loan_interest", "warn"), "1098-E deduction cap -> warn");
+const k1 = [fld("variant", "1065"), fld("entity_name", "Partnership"), fld("entity_ein", "12-3456789"), fld("recipient_name", "Jane"), fld("recipient_tin", "412-11-2222"), fld("beginning_capital", "100"), fld("capital_contributed", "50"), fld("current_year_net_income_loss", "20"), fld("other_increase_decrease", "0"), fld("withdrawals_distributions", "10"), fld("ending_capital", "999"), fld("tax_year", "2024")];
+assert(hasFlag("K-1", k1, "ending_capital", "error"), "K-1 1065 capital rollforward mismatch -> error");
+const charity = [fld("organization_name", "Good Works"), fld("donor_name", "Jane"), fld("donation_date", "2024-12-01"), fld("donation_type", "cash"), fld("cash_amount", "250"), fld("has_no_goods_or_services_statement", "false"), fld("tax_year", "2024")];
+assert(hasFlag("CHARITABLE_RECEIPT", charity, "has_no_goods_or_services_statement", "error"), "$250 charitable receipt missing acknowledgment -> error");
+
+function doc(id: string, fields: ExtractedField[]): IntakeDoc { return { id, fileName: `${id}.png`, fileSize: 1, status: "clean", ocrProgress: 100, ocrText: "", pages: [], formType: "W-2", fields, flags: [] }; }
+const employer2 = cleanW2.map((f) => f.key === "employer_ein" ? fld("employer_ein", "13-4567890") : f.key === "box4_ss_tax" ? fld("box4_ss_tax", "6000") : f);
+const employer1 = cleanW2.map((f) => f.key === "box4_ss_tax" ? fld("box4_ss_tax", "6000") : f);
+assert(validateBatch([doc("w2-a", employer1), doc("w2-b", employer2)]).some((f) => f.fieldKey === "excess_ss_withholding" && f.severity === "warn"), "two W-2s over SS cap -> external warning");
+
+
+// --- 1099-R distribution codes (verified vs IRS instructions) ---------------
+console.log("1099-R distribution codes");
+function rWithCode(code: string): ExtractedField[] {
+  return [
+    fld("payer_name", "Fidelity"), fld("payer_tin", "12-3456789"),
+    fld("recipient_name", "John"), fld("recipient_tin", "412-22-3333"),
+    fld("box1_gross_distribution", "10000"), fld("box2a_taxable_amount", "10000"),
+    fld("box7_distribution_code", code), fld("tax_year", "2024"),
+  ];
+}
+for (const c of ["C", "M", "Y", "7", "7D"]) {
+  assert(!hasFlag("1099-R", rWithCode(c), "box7_distribution_code", "error"), `distribution code ${c} is valid`);
+}
+for (const c of ["V", "Z", "I", "O"]) {
+  assert(hasFlag("1099-R", rWithCode(c), "box7_distribution_code", "error"), `distribution code ${c} is invalid -> error`);
+}
+
+// --- 1099-G, 1098-T, 1098, K-1 percent --------------------------------------
+console.log("more new-form rules");
+const g = [fld("payer_name", "State"), fld("payer_tin", "12-3456789"), fld("recipient_name", "Jane"), fld("recipient_tin", "412-11-2222"), fld("box2_state_refund", "800"), fld("tax_year", "2024")];
+assert(hasFlag("1099-G", g, "box3_refund_tax_year", "error"), "1099-G Box 2 refund without Box 3 year -> error");
+
+const t = [fld("filer_name", "State U"), fld("filer_ein", "12-3456789"), fld("student_name", "Sam"), fld("student_tin", "412-11-2222"), fld("box1_qualified_tuition", "4000"), fld("box5_scholarships", "6000"), fld("tax_year", "2024")];
+assert(hasFlag("1098-T", t, "box5_scholarships", "warn"), "1098-T scholarships > tuition -> warn");
+
+const mortgage = [fld("lender_name", "Bank"), fld("lender_tin", "12-3456789"), fld("borrower_name", "Jo"), fld("borrower_tin", "412-11-2222"), fld("box1_mortgage_interest", "9000"), fld("box2_outstanding_principal", "5000"), fld("tax_year", "2024")];
+assert(hasFlag("1098", mortgage, "box1_mortgage_interest", "warn"), "1098 interest >= principal -> warn");
+
+const k1pct = [...k1.filter((f) => f.key !== "ending_capital"), fld("ending_capital", "160"), fld("capital_pct_ending", "140")];
+assert(hasFlag("K-1", k1pct, "capital_pct_ending", "error"), "K-1 ending % over 100 -> error");
+
+// --- more batch checks ------------------------------------------------------
+console.log("batch checks");
+function mkDoc(id: string, formType: FormType, fields: ExtractedField[]): IntakeDoc {
+  return { id, fileName: `${id}.png`, fileSize: 1, status: "clean", ocrProgress: 100, ocrText: "", pages: [], formType, fields, flags: [] };
+}
+const nec1 = [fld("payer_name", "Acme"), fld("payer_tin", "81-4455221"), fld("recipient_name", "Dev"), fld("recipient_tin", "412-73-4192"), fld("box1_nonemployee_comp", "48500"), fld("tax_year", "2024")];
+const nec2 = nec1.map((f) => ({ ...f })); // identical -> duplicate
+assert(validateBatch([mkDoc("a", "1099-NEC", nec1), mkDoc("b", "1099-NEC", nec2)]).some((f) => f.fieldKey === "duplicate_document"), "identical 1099-NECs -> duplicate warning");
+
+const necY1 = [...nec1.filter((f) => f.key !== "tax_year"), fld("tax_year", "2023")];
+const necY2 = [...nec1.filter((f) => f.key !== "tax_year"), fld("tax_year", "2024")];
+assert(validateBatch([mkDoc("a", "1099-NEC", necY1), mkDoc("b", "1099-NEC", necY2)]).some((f) => f.fieldKey === "mixed_years"), "mixed tax years -> warning");
+
+const idA = [fld("payer_name", "P"), fld("payer_tin", "81-4455221"), fld("recipient_name", "Jane Doe"), fld("recipient_tin", "412-11-2222"), fld("box1_interest", "100"), fld("tax_year", "2024")];
+const idB = [fld("payer_name", "Q"), fld("payer_tin", "94-2551803"), fld("recipient_name", "John Smith"), fld("recipient_tin", "412-11-2222"), fld("box1_interest", "200"), fld("tax_year", "2024")];
+assert(validateBatch([mkDoc("a", "1099-INT", idA), mkDoc("b", "1099-INT", idB)]).some((f) => f.fieldKey === "identity_mismatch"), "same SSN different names -> identity mismatch");
 
 // --- summary ----------------------------------------------------------------
 console.log(`\n${passed} passed, ${failed} failed`);

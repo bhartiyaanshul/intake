@@ -25,7 +25,7 @@ const RAIL_CLASS: Record<RailColor, string> = {
 };
 
 // Numeric-ish fields render in tabular mono; free text in sans.
-const MONO_TYPES: FieldType[] = ["money", "ssn", "ein", "code", "year", "state"];
+const MONO_TYPES: FieldType[] = ["money", "ssn", "ein", "code", "year", "state", "percent"];
 
 export const FieldRow = forwardRef<
   HTMLInputElement,
@@ -123,7 +123,7 @@ export const FieldRow = forwardRef<
               <li
                 key={i}
                 className={`flex items-start gap-1 text-[11px] leading-snug ${
-                  f.severity === "error" ? "text-danger" : "text-amber"
+                  f.severity === "error" ? "text-danger" : f.severity === "warn" ? "text-amber" : "text-ink/55"
                 }`}
               >
                 <span aria-hidden className="mt-px">

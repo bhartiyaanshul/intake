@@ -34,13 +34,13 @@ export function toCSV(docs: IntakeDoc[]): string {
   }
   const fieldKeys = [...ALL_FIELD_KEYS, ...extraKeys];
 
-  const header = ["form_type", "file_name", "tax_year", ...fieldKeys];
+  const header = ["form_type", "variant", "file_name", "tax_year", ...fieldKeys];
   const rows: string[] = [header.map(csvEscape).join(",")];
 
   for (const doc of docs) {
     const byKey = new Map(doc.fields.map((f) => [f.key, f.value]));
     const taxYear = byKey.get("tax_year") ?? "";
-    const cells: string[] = [doc.formType, doc.fileName, String(taxYear)];
+    const cells: string[] = [doc.formType, doc.variant ?? "", doc.fileName, String(taxYear)];
     for (const key of fieldKeys) {
       const raw = byKey.get(key);
       if (raw == null || String(raw).trim() === "") {
@@ -63,6 +63,7 @@ export function toJSON(docs: IntakeDoc[]): string {
   const out = docs.map((doc) => ({
     fileName: doc.fileName,
     formType: doc.formType,
+    variant: doc.variant ?? null,
     status: doc.status,
     confirmedAt: doc.confirmedAt ?? null,
     fields: doc.fields.map((f) => ({

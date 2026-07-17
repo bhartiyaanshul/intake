@@ -20,8 +20,9 @@ moment a red validation flag turns green when a value is corrected.
   `tesseract.js`. Documents containing SSNs never leave the browser as images —
   **only OCR text is sent to the server.** This is a genuine privacy posture for
   tax data, not a shortcut.
-- **AI extraction (Groq).** The server route sends OCR text to
-  `llama-3.3-70b-versatile`, which classifies the form and transcribes each
+- **AI extraction (Groq with Gemini fallback).** The server route sends OCR text to
+  `llama-3.3-70b-versatile`, then uses Gemini only if Groq fails and a
+  `GEMINI_API_KEY` is configured. The provider classifies the form and transcribes each
   field into a typed schema with a per-field confidence score. Values are
   transcribed exactly as printed; absent fields come back `null`, never guessed.
 - **Deterministic validation.** Pure functions re-check every field on every
@@ -37,7 +38,9 @@ moment a red validation flag turns green when a value is corrected.
 
 ## Supported forms
 
-W-2, 1099-NEC, 1099-INT, 1099-DIV, 1099-R, 1099-MISC, 1098, and an `UNKNOWN`
+W-2, 1099-NEC, 1099-INT, 1099-DIV, 1099-R, 1099-MISC, 1098, 1099-G, SSA-1099,
+Schedule K-1 (1065, 1120-S, 1041), 1098-E, 1098-T, charitable donation receipts,
+and an `UNKNOWN`
 fallback that does generic key/value extraction and labels the document
 "Unrecognized — raw extraction" rather than erroring out.
 
@@ -248,6 +251,7 @@ npm install
 # 2. Add your Groq key (get one at https://console.groq.com/keys)
 cp .env.example .env.local
 #   then edit .env.local and set GROQ_API_KEY=gsk_...
+#   optional: set GEMINI_API_KEY=... for provider fallback
 
 # 3. Run
 npm run dev        # http://localhost:3000

@@ -1,4 +1,4 @@
-import type { DocStatus, FormType } from "@/lib/types";
+import type { DocStatus, FormType, K1Variant } from "@/lib/types";
 
 // Status chip that live-updates as a document moves through the pipeline. Colors
 // map to the ledger palette: red = needs review, amber = verify, green = ready
@@ -62,7 +62,7 @@ export function StatusChip({
   );
 }
 
-export function FormTypeChip({ formType }: { formType: FormType }) {
+export function FormTypeChip({ formType, variant }: { formType: FormType; variant?: K1Variant }) {
   const unknown = formType === "UNKNOWN";
   return (
     <span
@@ -73,7 +73,7 @@ export function FormTypeChip({ formType }: { formType: FormType }) {
       }`}
       title={unknown ? "Unrecognized — raw extraction" : formType}
     >
-      {unknown ? "Unrecognized" : formType}
+      {unknown ? "Unrecognized" : variant ? `${formType} · ${variant}` : formType}
     </span>
   );
 }

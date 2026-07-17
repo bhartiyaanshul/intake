@@ -114,6 +114,11 @@ export function FieldPanel({
       <div className="flex items-center justify-between border-b border-hairline px-4 py-3">
         <div className="flex items-center gap-3 text-sm">
           <span className="font-semibold text-ink">Review fields</span>
+          {doc.extractionProvider === "gemini" && (
+            <span className="rounded border border-amber/30 bg-[#f6ead6] px-1.5 py-0.5 text-[10px] font-medium text-amber">
+              Gemini fallback
+            </span>
+          )}
           {errorCount > 0 && (
             <span className="tnum text-danger">{errorCount} error{errorCount !== 1 && "s"}</span>
           )}

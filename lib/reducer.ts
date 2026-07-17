@@ -1,5 +1,6 @@
 import { getSchema } from "./schemas";
 import { statusFromFlags, validateDocument } from "./validate";
+import { maskSSN } from "./privacy";
 import type {
   DocStatus,
   ExtractedField,
@@ -31,7 +32,8 @@ export type Action =
   | { type: "EDIT_FIELD"; id: string; key: string; value: string }
   | { type: "CONFIRM"; id: string; at: number }
   | { type: "UNCONFIRM"; id: string }
-  | { type: "REMOVE_DOC"; id: string };
+  | { type: "REMOVE_DOC"; id: string }
+  | { type: "REVALIDATE_ALL" };
 
 // Build ExtractedField[] for a document from an extraction result. For known
 // form types we lay fields out in schema order (so the review panel is stable);
@@ -43,7 +45,7 @@ export function buildFields(result: ExtractionResult): ExtractedField[] {
   if (schema.length > 0) {
     for (const def of schema) {
       const got = result.fields[def.key];
-      const value = got?.value ?? "";
+      const value = def.type === "ssn" ? maskSSN(got?.value ?? "") : got?.value ?? "";
       fields.push({
         key: def.key,
         value,
@@ -72,11 +74,17 @@ export function buildFields(result: ExtractionResult): ExtractedField[] {
 // Recompute flags + derived status for a doc, preserving confirmation only if
 // nothing has invalidated it (caller decides when to drop confirmation).
 function revalidate(doc: IntakeDoc): IntakeDoc {
-  const flags = validateDocument(doc.formType, doc.fields);
+  const fields = doc.fields.map((field) => {
+    const def = getSchema(doc.formType).find((candidate) => candidate.key === field.key);
+    return def?.type === "ssn"
+      ? { ...field, value: maskSSN(field.value), originalValue: maskSSN(field.originalValue) }
+      : field;
+  });
+  const flags = validateDocument(doc.formType, fields);
   const derived = statusFromFlags(flags);
   const status: DocStatus =
     doc.status === "confirmed" ? "confirmed" : derived;
-  return { ...doc, flags, status };
+  return { ...doc, fields, flags, status };
 }
 
 function mapDoc(
@@ -129,6 +137,14 @@ export function reducer(state: State, action: Action): State {
         const base: IntakeDoc = {
           ...d,
           formType: action.result.formType,
+          variant:
+            action.result.variant ??
+            (action.result.fields.variant?.value === "1065" ||
+            action.result.fields.variant?.value === "1120-S" ||
+            action.result.fields.variant?.value === "1041"
+              ? action.result.fields.variant.value
+              : undefined),
+          extractionProvider: action.result.provider,
           fields,
           error: undefined,
           status: "clean", // placeholder, revalidate overwrites
@@ -153,15 +169,12 @@ export function reducer(state: State, action: Action): State {
 
     case "EDIT_FIELD": {
       return mapDoc(state, action.id, (d) => {
-        const fields = d.fields.map((f) =>
-          f.key === action.key
-            ? {
-                ...f,
-                value: action.value,
-                edited: action.value !== f.originalValue,
-              }
-            : f,
-        );
+        const fields = d.fields.map((f) => {
+          if (f.key !== action.key) return f;
+          const def = getSchema(d.formType).find((candidate) => candidate.key === f.key);
+          const value = def?.type === "ssn" ? maskSSN(action.value) : action.value;
+          return { ...f, value, edited: value !== f.originalValue };
+        });
         // DECISION: editing a confirmed doc drops confirmation. A confirmation
         // attests to specific values; changing one invalidates that attestation,
         // so the preparer must re-confirm rather than silently exporting stale data.
@@ -194,6 +207,17 @@ export function reducer(state: State, action: Action): State {
       if (selectedId === action.id) selectedId = docs[0]?.id ?? null;
       return { docs, selectedId };
     }
+
+    // Re-run per-doc validation across the batch — used when the preparer
+    // toggles validation rules on/off so flags/status update live. Extracted
+    // and confirmed docs are both re-derived; confirmation is preserved.
+    case "REVALIDATE_ALL":
+      return {
+        ...state,
+        docs: state.docs.map((d) =>
+          d.fields.length > 0 ? revalidate(d) : d,
+        ),
+      };
 
     default:
       return state;

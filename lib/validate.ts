@@ -1,543 +1,106 @@
 import { getSchema } from "./schemas";
-import {
-  einPrefixIssue,
-  parseBox12Codes,
-  ssnStructuralIssue,
-  US_STATE_CODES,
-  W2_BOX12_CODES,
-} from "./reference";
-import type {
-  ExtractedField,
-  FieldDef,
-  FormType,
-  ValidationFlag,
-} from "./types";
+import { einPrefixIssue, parseBox12Codes, ssnStructuralIssue, US_STATE_CODES, W2_BOX12_CODES } from "./reference";
+import { constantsForYear } from "./taxConstants";
+import { isMaskedSSN } from "./privacy";
+import { isRuleEnabled } from "./rules";
+import type { ExtractedField, FieldDef, FormType, IntakeDoc, ValidationFlag } from "./types";
 
-// ---------------------------------------------------------------------------
-// Pure, deterministic validation engine. Re-run live on every client-side edit.
-// Every rule returns a ValidationFlag { fieldKey, severity, message }.
-// No I/O, no dates, no randomness — fully unit-testable.
-// ---------------------------------------------------------------------------
-
-// Social Security wage base by tax year. Box 3 (SS wages) cannot exceed this.
-const SS_WAGE_BASE: Record<number, number> = {
-  2023: 160200,
-  2024: 168600,
-  2025: 176100,
-};
-const SS_RATE = 0.062; // 6.2%
-const MEDICARE_RATE = 0.0145; // 1.45%
-const ADDL_MEDICARE_THRESHOLD = 200000; // 0.9% Additional Medicare over this
 const CONFIDENCE_THRESHOLD = 0.8;
+// Each flag is tagged with the id of the rule that produced it (see lib/rules.ts)
+// so individual rules can be toggled off by the preparer.
+const flag = (ruleId: string, fieldKey: string, severity: ValidationFlag["severity"], message: string, suggestedValue?: string): ValidationFlag => ({ fieldKey, severity, scope: "internal", ruleId, message, suggestedValue });
+const external = (ruleId: string, fieldKey: string, severity: ValidationFlag["severity"], message: string, documents: string[]): ValidationFlag => ({ fieldKey, severity, scope: "external", ruleId, message, documents });
 
-// ---- value parsing helpers -------------------------------------------------
-
-/** Strip $, commas, spaces and parse to a number. Returns null if unparseable. */
 export function parseMoney(raw: string | null | undefined): number | null {
   if (raw == null) return null;
-  const cleaned = String(raw).replace(/[$,\s]/g, "").replace(/[()]/g, "");
-  if (cleaned === "") return null;
-  const n = Number(cleaned);
-  return Number.isFinite(n) ? n : null;
+  const cleaned = String(raw).replace(/[$,\s()]/g, "");
+  if (!cleaned) return null;
+  const negative = /[()]/.test(String(raw));
+  const value = Number(cleaned);
+  return Number.isFinite(value) ? (negative ? -Math.abs(value) : value) : null;
 }
+export function formatMoney(n: number): string { return n.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+const digits = (v: string) => v.replace(/\D/g, "");
+export function isValidSSN(v: string): boolean { return isMaskedSSN(v) || /^\d{3}-\d{2}-\d{4}$/.test(v.trim()) || (/^\d{9}$/.test(v.trim())); }
+export function isValidEIN(v: string): boolean { return /^\d{2}-\d{7}$/.test(v.trim()) || (/^\d{9}$/.test(v.trim())); }
+function parsePercent(v: string | undefined): number | null { if (!v) return null; const n = Number(v.replace(/[%\s,]/g, "")); return Number.isFinite(n) ? n : null; }
+function bool(v: string | undefined): boolean { return /^(true|yes|checked|x|1)$/i.test((v ?? "").trim()); }
+function vals(fields: ExtractedField[]) { return Object.fromEntries(fields.filter((f) => f.value.trim() !== "").map((f) => [f.key, f.value])); }
+function yearOf(v: Record<string, string>): number | null { const n = Number(digits(v.tax_year ?? "").slice(0, 4)); return Number.isFinite(n) && n > 1900 ? n : null; }
+function within(actual: number, expected: number) { return Math.abs(actual - expected) <= Math.max(2, Math.abs(expected) * 0.01); }
+function normalized(v: string | undefined) { return (v ?? "").replace(/[^A-Za-z0-9]/g, "").toUpperCase(); }
 
-/** Normalize digits only. */
-function digitsOnly(raw: string): string {
-  return raw.replace(/\D/g, "");
-}
-
-/** Format a number the way these forms print money: 1234.5 -> "1,234.50". */
-export function formatMoney(n: number): string {
-  return n.toLocaleString("en-US", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  });
-}
-
-const SSN_RE = /^\d{3}-\d{2}-\d{4}$/;
-const EIN_RE = /^\d{2}-\d{7}$/;
-
-export function isValidSSN(raw: string): boolean {
-  const t = raw.trim();
-  if (SSN_RE.test(t)) return true;
-  return digitsOnly(t).length === 9 && !t.includes("-"); // 9 bare digits
-}
-
-export function isValidEIN(raw: string): boolean {
-  const t = raw.trim();
-  if (EIN_RE.test(t)) return true;
-  return digitsOnly(t).length === 9 && !t.includes("-"); // 9 bare digits
-}
-
-// Valid IRS 1099-R Box 7 distribution codes (single chars + valid two-char combos).
-const VALID_1099R_SINGLE = new Set([
-  "1", "2", "3", "4", "5", "6", "7", "8", "9",
-  "A", "B", "D", "E", "F", "G", "H", "J", "K", "L",
-  "M", "N", "P", "Q", "R", "S", "T", "U", "W",
-]);
-
-function isValidDistributionCode(raw: string): boolean {
-  const code = raw.trim().toUpperCase();
-  if (code === "") return false;
-  // Accept comma/space separated combos, or two-char combos like "7D", "1B".
-  const parts = code.split(/[\s,]+/).filter(Boolean);
-  for (const part of parts) {
-    if (part.length === 1) {
-      if (!VALID_1099R_SINGLE.has(part)) return false;
-    } else if (part.length === 2) {
-      if (!VALID_1099R_SINGLE.has(part[0]) || !VALID_1099R_SINGLE.has(part[1]))
-        return false;
-    } else {
-      return false;
-    }
-  }
-  return true;
-}
-
-/** Tolerance for arithmetic checks: greater of ±$2 or ±1% of the expected value. */
-function withinTolerance(actual: number, expected: number): boolean {
-  const tol = Math.max(2, Math.abs(expected) * 0.01);
-  return Math.abs(actual - expected) <= tol;
-}
-
-// Build a quick key -> value map for present, non-empty fields.
-function valueMap(fields: ExtractedField[]): Record<string, string> {
-  const m: Record<string, string> = {};
+function baseRules(fields: ExtractedField[], schema: FieldDef[]): ValidationFlag[] {
+  const out: ValidationFlag[] = []; const v = vals(fields); const defs = new Map(schema.map((d) => [d.key, d]));
+  for (const def of schema) if (def.required && !v[def.key]) out.push(flag("required_field", def.key, "error", `Required field is missing - ${def.label} must be present.`));
   for (const f of fields) {
-    if (f.value != null && String(f.value).trim() !== "") m[f.key] = f.value;
+    const def = defs.get(f.key); const value = f.value.trim(); if (!def || !value) continue;
+    if (def.type === "ssn" && !isValidSSN(value)) out.push(flag("ssn_format", f.key, "error", "Not a valid SSN - expected XXX-XX-XXXX or 9 digits."));
+    if (def.type === "ein" && !isValidEIN(value)) out.push(flag("ein_format", f.key, "error", "Not a valid EIN/TIN - expected XX-XXXXXXX or 9 digits."));
+    if (def.type === "money" && parseMoney(value) == null) out.push(flag("money_format", f.key, "error", "Amount doesn't parse as a number."));
+    if (def.type === "percent" && (parsePercent(value) == null)) out.push(flag("percent_format", f.key, "error", "Percentage doesn't parse as a number."));
+    if (def.type === "year" && (!Number.isFinite(Number(digits(value).slice(0, 4))) || Number(digits(value).slice(0, 4)) < 1990 || Number(digits(value).slice(0, 4)) > 2100)) out.push(flag("year_range", f.key, "warn", "Tax year looks off - confirm against the document."));
+    if (def.type === "ssn" && !isMaskedSSN(value)) { const issue = ssnStructuralIssue(digits(value)); if (issue) out.push(flag("ssn_structure", f.key, "warn", `SSN structure is not one the SSA issues (${issue}) - verify it wasn't misread.`)); }
+    if (def.type === "ein") { const issue = einPrefixIssue(digits(value)); if (issue) out.push(flag("ein_prefix", f.key, "warn", `EIN prefix "${issue}" is not IRS-assigned - verify it wasn't misread.`)); }
+    if (def.type === "state" && !US_STATE_CODES.has(value.toUpperCase())) out.push(flag("state_code", f.key, "warn", `"${value}" is not a valid US state/territory code.`));
+    if (!f.edited && f.confidence < CONFIDENCE_THRESHOLD) out.push(flag("low_confidence", f.key, "warn", `Low extraction confidence (${Math.round(f.confidence * 100)}%) - verify against document.`));
   }
-  return m;
+  const b12 = v.box12; if (b12) { const bad = parseBox12Codes(b12).filter((c) => !W2_BOX12_CODES.has(c)); if (bad.length) out.push(flag("box12_codes", "box12", "warn", `Box 12 code(s) not recognized: ${bad.join(", ")}.`)); }
+  return out;
 }
 
-function parsedTaxYear(vals: Record<string, string>): number | null {
-  const raw = vals["tax_year"];
-  if (!raw) return null;
-  const n = parseInt(digitsOnly(raw).slice(0, 4), 10);
-  return Number.isFinite(n) ? n : null;
+function constantsWarning(v: Record<string, string>, out: ValidationFlag[]) { const c = constantsForYear(yearOf(v)); if (c.usedFallback) out.push(flag("constants_fallback", "tax_year", "warn", `Tax year missing or unsupported; using ${c.year} tax constants for validation.`)); return c; }
+function w2Rules(fields: ExtractedField[]) {
+  const out: ValidationFlag[] = []; const v = vals(fields); const c = constantsWarning(v, out).constants;
+  const b1=parseMoney(v.box1_wages), b2=parseMoney(v.box2_fed_withholding), b3=parseMoney(v.box3_ss_wages), b4=parseMoney(v.box4_ss_tax), b5=parseMoney(v.box5_medicare_wages), b6=parseMoney(v.box6_medicare_tax), b7=parseMoney(v.box7_ss_tips) ?? 0, b16=parseMoney(v.box16_state_wages);
+  if (b3 != null && b4 != null) { const expected=(b3+b7)*c.ssTaxRate; if (!within(b4,expected)) out.push(flag("w2_box4_ss_tax", "box4_ss_tax","error",`Box 4 should be ~${c.ssTaxRate*100}% of Box 3 (~$${formatMoney(expected)}).`,formatMoney(expected))); }
+  if (b5 != null && b6 != null) { const expected=b5*c.medicareRate; if (!within(b6,expected)) out.push(flag("w2_box6_medicare", "box6_medicare_tax", b5 > c.additionalMedicareThreshold && b6 > expected ? "warn":"error", b5 > c.additionalMedicareThreshold && b6 > expected ? "Box 6 may include Additional Medicare Tax; verify." : `Box 6 should be ~${c.medicareRate*100}% of Box 5 (~$${formatMoney(expected)}).`, b5 > c.additionalMedicareThreshold && b6 > expected ? undefined:formatMoney(expected))); }
+  if (b3 != null && b5 != null && b5 + .01 < b3) out.push(flag("w2_medicare_ge_ss", "box5_medicare_wages", "warn", "Box 5 (Medicare wages) is less than Box 3 (SS wages); verify."));
+  if (b3 != null && b3+b7 > c.ssWageBase+.01) out.push(flag("w2_ss_wage_base", "box3_ss_wages", "error", `Box 3${b7 ? " + Box 7" : ""} exceeds the Social Security wage base of $${c.ssWageBase.toLocaleString()}.`));
+  if (b1 != null && b2 != null && b2 >= b1 && b1 > 0) out.push(flag("w2_withholding_lt_wages", "box2_fed_withholding","warn","Box 2 (withholding) is >= Box 1 (wages) - unusual, verify."));
+  if (b1 != null && b16 != null && b16 > b1 * 1.01 + 2) out.push(flag("w2_box16_vs_box1", "box16_state_wages","warn","Box 16 exceeds Box 1 - can be legitimate for multi-state wages, verify."));
+  return out;
+}
+function simpleRules(type: FormType, fields: ExtractedField[]) {
+  const out: ValidationFlag[]=[]; const v=vals(fields); const a=(k:string)=>parseMoney(v[k]); const c=constantsWarning(v,out).constants;
+  if (type === "SSA-1099") { const b3=a("box3_benefits_paid"),b4=a("box4_benefits_repaid")??0,b5=a("box5_net_benefits"),b6=a("box6_voluntary_withholding"); if(b3!=null&&b5!=null&&!within(b5,b3-b4)) out.push(flag("ssa_net_benefits", "box5_net_benefits","error",`Box 5 must equal Box 3 minus Box 4 ($${formatMoney(b3-b4)}).`,formatMoney(b3-b4))); if(b5!=null&&b6!=null&&b6>b5+.01) out.push(flag("ssa_withholding", "box6_voluntary_withholding","warn","Box 6 withholding should not exceed Box 5 net benefits.")); }
+  if (type === "1099-G") { const b1=a("box1_unemployment_comp")??0,b6=a("box6_taxable_grants")??0,b4=a("box4_fed_withholding"); if(b4!=null&&b4>b1+b6) out.push(flag("1099g_withholding", "box4_fed_withholding","warn","Federal withholding exceeds total taxable amounts; verify.")); if(a("box2_state_refund")!=null&&!v.box3_refund_tax_year) out.push(flag("1099g_refund_year", "box3_refund_tax_year","error","Box 3 refund tax year is required when Box 2 state refund is present.")); }
+  if (type === "1099-R") { const b1=a("box1_gross_distribution"),b2=a("box2a_taxable_amount"),code=v.box7_distribution_code?.toUpperCase(); if(b1!=null&&b2!=null&&b2>b1+.01) out.push(flag("1099r_taxable_le_gross", "box2a_taxable_amount","error","Box 2a cannot exceed Box 1.")); if(code && !/^[123456789ABCDEFGHJKLMNPQRSTUWY](?:[123456789ABCDEFGHJKLMNPQRSTUWY])?$/.test(code)) out.push(flag("1099r_code_valid", "box7_distribution_code","error",`"${code}" is not a valid IRS distribution code.`)); if(code?.includes("1")) out.push(flag("1099r_early_dist_info", "box7_distribution_code","info","Early distribution code 1: a 10% additional tax may apply.")); if(bool(v.ira_sep_simple)&&code?.includes("7")) out.push(flag("1099r_ira_code7_info", "box7_distribution_code","info","IRA/SEP/SIMPLE normal distribution code 7 noted.")); }
+  if (type === "1099-DIV") { const x=a("box1a_ordinary_div"),y=a("box1b_qualified_div"); if(x!=null&&y!=null&&y>x+.01) out.push(flag("1099div_qualified_le_ordinary", "box1b_qualified_div","error","Qualified dividends cannot exceed ordinary dividends.")); }
+  if (["1099-NEC","1099-INT","1099-DIV","1099-MISC"].includes(type)) { const keys:Record<string,string[]>={"1099-NEC":["box1_nonemployee_comp"],"1099-INT":["box1_interest","box3_treasury_interest","box8_tax_exempt"],"1099-DIV":["box1a_ordinary_div","box2a_capital_gain"],"1099-MISC":["box1_rents","box2_royalties","box3_other_income"]}; const withholding=a("box4_fed_withholding"), largest=Math.max(0,...keys[type].map(a).filter((x):x is number=>x!=null)); if(withholding!=null&&largest>0&&withholding>largest*.5) out.push(flag("1099_withholding_ratio", "box4_fed_withholding","warn","Federal withholding is over 50% of the largest income box - unusual, verify.")); }
+  if (type === "1098-E" && (a("box1_student_loan_interest") ?? 0)>c.studentLoanInterestCap) out.push(flag("1098e_cap", "box1_student_loan_interest","warn",`Student loan interest deduction is capped at $${c.studentLoanInterestCap.toLocaleString()}; excess is not deductible.`));
+  if (type === "1098-T") { const tuition=a("box1_qualified_tuition"),sch=a("box5_scholarships"); if(sch!=null&&tuition!=null&&sch>tuition) out.push(flag("1098t_scholarship_gt_tuition", "box5_scholarships","warn","Scholarships exceed qualified tuition; taxable scholarship income and no education credit likely.")); if(tuition===0&&sch!=null&&sch>0) out.push(flag("1098t_zero_tuition", "box1_qualified_tuition","warn","Box 1 is $0 while Box 5 is populated; verify.")); }
+  if (type === "1098") { const interest=a("box1_mortgage_interest"),principal=a("box2_outstanding_principal"); if(interest!=null&&principal!=null&&interest>=principal) out.push(flag("1098_interest_vs_principal", "box1_mortgage_interest","warn","Mortgage interest is not normally greater than outstanding principal; verify.")); }
+  if (type === "K-1") { const variant=(v.variant ?? "").toUpperCase(); if(variant==="1065") { const b=a("beginning_capital"),con=a("capital_contributed")??0,inc=a("current_year_net_income_loss")??0,other=a("other_increase_decrease")??0,wd=a("withdrawals_distributions")??0,end=a("ending_capital"); if(b!=null&&end!=null&&!within(end,b+con+inc+other-wd)) out.push(flag("k1_capital_rollforward", "ending_capital","error",`Capital account rollforward should end at $${formatMoney(b+con+inc+other-wd)}.`,formatMoney(b+con+inc+other-wd))); for(const k of ["profit_pct_ending","loss_pct_ending","capital_pct_ending"]){const p=parsePercent(v[k]);if(p!=null&&(p<0||p>100))out.push(flag("k1_ownership_pct", k,"error","Ending ownership percentage must be between 0 and 100."));} if(v.box14_self_employment) out.push(flag("k1_se_info", "box14_self_employment","info","Box 14 self-employment earnings present; SE tax may apply.")); } if(variant==="1120-S") { const p=parsePercent(v.ownership_pct); if(p!=null&&(p<0||p>100)) out.push(flag("k1_ownership_pct", "ownership_pct","error","Ownership percentage must be between 0 and 100.")); /* DECISION: stock-basis/distribution analysis is intentionally omitted because the K-1 alone does not provide basis. */ } }
+  if (type === "CHARITABLE_RECEIPT") { const cash=a("cash_amount")??0, fmv=a("noncash_fair_market_value")??0; if(Math.max(cash,fmv)>=c.charitableAcknowledgmentThreshold&&!bool(v.has_no_goods_or_services_statement)) out.push(flag("charitable_acknowledgment", "has_no_goods_or_services_statement","error","Contributions of $250+ require a contemporaneous written acknowledgment stating whether goods or services were provided - this receipt is missing that statement and may not substantiate the deduction.")); if(fmv>c.form8283SectionBThreshold) out.push(flag("charitable_8283", "noncash_fair_market_value","warn","Non-cash donations over $5,000 generally require a qualified appraisal and Form 8283 Section B.")); else if(fmv>c.form8283SectionAThreshold) out.push(flag("charitable_8283", "noncash_fair_market_value","warn","Non-cash donations over $500 generally require Form 8283 Section A.")); }
+  return out;
 }
 
-// ---- rule groups -----------------------------------------------------------
+export function validateDocument(formType: FormType, fields: ExtractedField[]): ValidationFlag[] { const out=formType === "UNKNOWN" ? fields.filter(f=>!f.edited&&f.value.trim()&&f.confidence<CONFIDENCE_THRESHOLD).map(f=>flag("low_confidence", f.key,"warn",`Low extraction confidence (${Math.round(f.confidence*100)}%) - verify against document.`)) : [...baseRules(fields,getSchema(formType)), ...(formType==="W-2"?w2Rules(fields):simpleRules(formType,fields))]; return out.filter(f=>isRuleEnabled(f.ruleId)).filter((f,i,a)=>a.findIndex(x=>`${x.fieldKey}|${x.severity}|${x.message}`===`${f.fieldKey}|${f.severity}|${f.message}`)===i); }
 
-function formatRules(
-  fields: ExtractedField[],
-  schema: FieldDef[],
-): ValidationFlag[] {
-  const flags: ValidationFlag[] = [];
-  const byKey = new Map(schema.map((d) => [d.key, d]));
-  for (const f of fields) {
-    const def = byKey.get(f.key);
-    if (!def) continue;
-    const v = String(f.value ?? "").trim();
-    if (v === "") continue; // emptiness handled by required-field rule
-    switch (def.type) {
-      case "ssn":
-        if (!isValidSSN(v))
-          flags.push({
-            fieldKey: f.key,
-            severity: "error",
-            message: "Not a valid SSN — expected XXX-XX-XXXX or 9 digits.",
-          });
-        break;
-      case "ein":
-        if (!isValidEIN(v))
-          flags.push({
-            fieldKey: f.key,
-            severity: "error",
-            message: "Not a valid EIN/TIN — expected XX-XXXXXXX or 9 digits.",
-          });
-        break;
-      case "money":
-        if (parseMoney(v) === null)
-          flags.push({
-            fieldKey: f.key,
-            severity: "error",
-            message: "Amount doesn't parse as a number.",
-          });
-        break;
-      case "year": {
-        const y = parseInt(digitsOnly(v).slice(0, 4), 10);
-        if (!Number.isFinite(y) || y < 1990 || y > 2100)
-          flags.push({
-            fieldKey: f.key,
-            severity: "warn",
-            message: "Tax year looks off — confirm against the document.",
-          });
-        break;
-      }
-    }
+function docValue(d: IntakeDoc, key: string) { return d.fields.find(f=>f.key===key)?.value; }
+function docTin(d: IntakeDoc) {
+  const raw = docValue(d,"employee_ssn") ?? docValue(d,"beneficiary_ssn") ?? docValue(d,"borrower_ssn") ?? docValue(d,"student_tin") ?? docValue(d,"recipient_tin");
+  // DECISION: last-four-only SSNs are intentionally not batch identity keys.
+  // Matching on them could join unrelated taxpayers who share a suffix.
+  return raw && isMaskedSSN(raw) ? "" : normalized(raw);
+}
+function docName(d: IntakeDoc) { return docValue(d,"employee_name") ?? docValue(d,"beneficiary_name") ?? docValue(d,"borrower_name") ?? docValue(d,"student_name") ?? docValue(d,"recipient_name") ?? docValue(d,"donor_name"); }
+function docPayer(d: IntakeDoc) { return normalized(docValue(d,"employer_ein") ?? docValue(d,"payer_tin") ?? docValue(d,"lender_tin") ?? docValue(d,"entity_ein") ?? docValue(d,"filer_ein")); }
+function primaryAmount(d: IntakeDoc) { const k:Record<string,string>={"W-2":"box1_wages","1099-NEC":"box1_nonemployee_comp","1099-INT":"box1_interest","1099-DIV":"box1a_ordinary_div","1099-R":"box1_gross_distribution","1099-MISC":"box1_rents","1099-G":"box1_unemployment_comp","SSA-1099":"box5_net_benefits","1098-E":"box1_student_loan_interest","1098-T":"box1_qualified_tuition","1098":"box1_mortgage_interest","CHARITABLE_RECEIPT":"cash_amount"}; return parseMoney(docValue(d,k[d.formType] ?? "")); }
+function fedWithholding(d: IntakeDoc) { return parseMoney(docValue(d,"box2_fed_withholding") ?? docValue(d,"box4_fed_withholding") ?? docValue(d,"box6_voluntary_withholding")); }
+
+export function validateBatch(docs: IntakeDoc[]): ValidationFlag[] {
+  const active=docs.filter(d=>d.formType!=="UNKNOWN"&&d.status!=="extract_failed"); const out:ValidationFlag[]=[]; const groups=new Map<string,IntakeDoc[]>(); for(const d of active){const tin=docTin(d);if(tin)groups.set(tin,[...(groups.get(tin)??[]),d]);}
+  for(const [tin,ds] of groups){ const w2=ds.filter(d=>d.formType==="W-2"); if(w2.length>=2){const total=w2.reduce((s,d)=>s+(parseMoney(docValue(d,"box4_ss_tax"))??0),0); const y=yearOf(Object.fromEntries(w2[0].fields.map(f=>[f.key,f.value]))); const c=constantsForYear(y).constants; if(total>c.maxSsTaxWithheldPerEmployer)out.push(external("batch_excess_ss", "excess_ss_withholding","warn","Excess Social Security tax withheld across multiple employers - the taxpayer can claim the excess as a credit (Schedule 3). Do not correct on the W-2.",w2.map(d=>d.id))); }
+    const income=ds.reduce((s,d)=>s+(primaryAmount(d)??0),0), withholding=ds.reduce((s,d)=>s+(fedWithholding(d)??0),0); if(income>0&&withholding>income*.4)out.push(external("batch_aggregate_withholding", "aggregate_withholding","warn","Aggregate federal withholding exceeds 40% of aggregate income; review for a transcription error.",ds.map(d=>d.id)));
+    const names=new Set(ds.map(d=>normalized(docName(d))).filter(Boolean)); if(names.size>1)out.push(external("batch_identity_mismatch", "identity_mismatch","warn",`Name mismatch for SSN ending ${tin.slice(-4)} - verify these documents belong to the same taxpayer.`,ds.map(d=>d.id)));
+    const states=[...new Set(ds.flatMap(d=>d.fields.filter(f=>f.key.endsWith("_state")&&/^[A-Za-z]{2}$/.test(f.value.trim())).map(f=>f.value.toUpperCase())))]; if(states.length>=3)out.push(external("batch_state_consistency", "state_consistency","info",`Multi-state return likely - ${states.join(", ")}.`,ds.map(d=>d.id)));
   }
-  return flags;
+  const byName=new Map<string,IntakeDoc[]>();for(const d of active){const n=normalized(docName(d));if(n)byName.set(n,[...(byName.get(n)??[]),d]);}for(const ds of byName.values()){if(new Set(ds.map(docTin).filter(Boolean)).size>1)out.push(external("batch_shared_name", "shared_name","info","Same recipient name appears with different SSNs; this could be spouses filing jointly.",ds.map(d=>d.id)));}
+  const dup=new Map<string,IntakeDoc[]>();for(const d of active){const p=docPayer(d),t=docTin(d),a=primaryAmount(d);if(p&&t&&a!=null){const k=`${d.formType}|${p}|${t}|${a}`;dup.set(k,[...(dup.get(k)??[]),d]);}}for(const ds of dup.values())if(ds.length>1)out.push(external("batch_duplicate", "duplicate_document","warn",`Possible duplicate - two matching ${ds[0].formType} documents detected; confirm this isn't the same document uploaded twice.`,ds.map(d=>d.id)));
+  const years=[...new Set(active.map(d=>yearOf(Object.fromEntries(d.fields.map(f=>[f.key,f.value])))).filter((y):y is number=>y!=null))];if(years.length>=2)out.push(external("batch_mixed_years", "mixed_years","warn",`Documents from multiple tax years (${years.sort().join(", ")}) - confirm you're not mixing prior-year documents into this return.`,active.map(d=>d.id)));
+  return out.filter(f=>isRuleEnabled(f.ruleId));
 }
 
-// External reference checks: the field is well-formed but we test it against
-// authoritative reference data (SSA structure, IRS EIN prefixes, W-2 Box 12
-// codes, USPS state codes). These are plausibility checks, so they warn rather
-// than hard-error — a warn surfaces the field for verification without blocking.
-function referenceRules(
-  fields: ExtractedField[],
-  schema: FieldDef[],
-): ValidationFlag[] {
-  const flags: ValidationFlag[] = [];
-  const byKey = new Map(schema.map((d) => [d.key, d]));
-  for (const f of fields) {
-    const def = byKey.get(f.key);
-    if (!def) continue;
-    const v = String(f.value ?? "").trim();
-    if (v === "") continue;
-
-    if (def.type === "ssn") {
-      const digits = digitsOnly(v);
-      const issue = ssnStructuralIssue(digits);
-      if (issue) {
-        flags.push({
-          fieldKey: f.key,
-          severity: "warn",
-          message: `SSN structure is not one the SSA issues (${issue}) — verify it wasn't misread.`,
-        });
-      }
-    }
-
-    if (def.type === "ein") {
-      const digits = digitsOnly(v);
-      const badPrefix = einPrefixIssue(digits);
-      if (badPrefix) {
-        flags.push({
-          fieldKey: f.key,
-          severity: "warn",
-          message: `EIN prefix "${badPrefix}" is not an IRS-assigned prefix — verify it wasn't misread.`,
-        });
-      }
-    }
-
-    if (def.type === "state") {
-      if (!US_STATE_CODES.has(v.toUpperCase())) {
-        flags.push({
-          fieldKey: f.key,
-          severity: "warn",
-          message: `"${v}" is not a valid US state/territory code.`,
-        });
-      }
-    }
-  }
-
-  // W-2 Box 12: every code letter must be in the IRS code set.
-  const box12 = fields.find((f) => f.key === "box12");
-  if (box12 && String(box12.value ?? "").trim() !== "") {
-    const codes = parseBox12Codes(String(box12.value));
-    const bad = codes.filter((c) => !W2_BOX12_CODES.has(c));
-    if (bad.length > 0) {
-      flags.push({
-        fieldKey: "box12",
-        severity: "warn",
-        message: `Box 12 code(s) not recognized: ${bad.join(", ")}. Valid codes are A–HH (no I, O, U, X).`,
-      });
-    }
-  }
-
-  return flags;
-}
-
-function requiredRules(
-  fields: ExtractedField[],
-  schema: FieldDef[],
-): ValidationFlag[] {
-  const flags: ValidationFlag[] = [];
-  const vals = valueMap(fields);
-  for (const def of schema) {
-    if (def.required && !vals[def.key]) {
-      flags.push({
-        fieldKey: def.key,
-        severity: "error",
-        message: `Required field is missing — ${def.label} must be present.`,
-      });
-    }
-  }
-  return flags;
-}
-
-function confidenceRules(fields: ExtractedField[]): ValidationFlag[] {
-  const flags: ValidationFlag[] = [];
-  for (const f of fields) {
-    // DECISION: an edited field is a preparer-confirmed value — trust it over
-    // the model's original confidence. Only flag low confidence on un-edited
-    // fields, so correcting a value clears its amber "verify" rail.
-    if (f.edited) continue;
-    const v = String(f.value ?? "").trim();
-    if (v === "") continue;
-    if (f.confidence < CONFIDENCE_THRESHOLD) {
-      flags.push({
-        fieldKey: f.key,
-        severity: "warn",
-        message: `Low extraction confidence (${Math.round(
-          f.confidence * 100,
-        )}%) — verify against document.`,
-      });
-    }
-  }
-  return flags;
-}
-
-function w2ArithmeticRules(fields: ExtractedField[]): ValidationFlag[] {
-  const flags: ValidationFlag[] = [];
-  const vals = valueMap(fields);
-
-  const box1 = parseMoney(vals["box1_wages"]);
-  const box2 = parseMoney(vals["box2_fed_withholding"]);
-  const box3 = parseMoney(vals["box3_ss_wages"]);
-  const box4 = parseMoney(vals["box4_ss_tax"]);
-  const box5 = parseMoney(vals["box5_medicare_wages"]);
-  const box6 = parseMoney(vals["box6_medicare_tax"]);
-  const box7 = parseMoney(vals["box7_ss_tips"]);
-  const box16 = parseMoney(vals["box16_state_wages"]);
-  const box17 = parseMoney(vals["box17_state_tax"]);
-  const box18 = parseMoney(vals["box18_local_wages"]);
-  const box19 = parseMoney(vals["box19_local_tax"]);
-  const year = parsedTaxYear(vals);
-
-  // Box 4 ≈ 6.2% of Box 3 (+ SS tips, which are also SS-taxable).
-  if (box3 != null && box4 != null && box3 > 0) {
-    const ssBase = box3 + (box7 ?? 0);
-    const expected = ssBase * SS_RATE;
-    if (!withinTolerance(box4, expected)) {
-      flags.push({
-        fieldKey: "box4_ss_tax",
-        severity: "error",
-        message: `Box 4 should be ~6.2% of Box 3${
-          box7 ? " + Box 7 tips" : ""
-        } (~$${formatMoney(expected)}). Got $${formatMoney(box4)}.`,
-        suggestedValue: formatMoney(expected),
-      });
-    }
-  }
-
-  // Box 6 ≈ 1.45% of Box 5 (downgrade to warn above the Additional Medicare threshold)
-  if (box5 != null && box6 != null && box5 > 0) {
-    const expected = box5 * MEDICARE_RATE;
-    if (!withinTolerance(box6, expected)) {
-      const overThreshold = box5 > ADDL_MEDICARE_THRESHOLD;
-      const excess = box6 > expected;
-      if (overThreshold && excess) {
-        flags.push({
-          fieldKey: "box6_medicare_tax",
-          severity: "warn",
-          message:
-            "Box 6 exceeds 1.45% of Box 5 — may include the 0.9% Additional Medicare Tax on wages over $200k. Verify.",
-        });
-      } else {
-        flags.push({
-          fieldKey: "box6_medicare_tax",
-          severity: "error",
-          message: `Box 6 should be ~1.45% of Box 5 (~$${formatMoney(
-            expected,
-          )}). Got $${formatMoney(box6)}.`,
-          suggestedValue: formatMoney(expected),
-        });
-      }
-    }
-  }
-
-  // Box 5 (Medicare wages) should be ≥ Box 3 (SS wages): Medicare has no wage
-  // cap, so it equals SS wages below the base and exceeds it above.
-  if (box3 != null && box5 != null && box5 + 0.01 < box3) {
-    flags.push({
-      fieldKey: "box5_medicare_wages",
-      severity: "warn",
-      message:
-        "Box 5 (Medicare wages) is less than Box 3 (SS wages) — Medicare wages are uncapped and normally ≥ SS wages. Verify.",
-    });
-  }
-
-  // Box 3 + Box 7 (SS wages + SS tips) must not exceed the SS wage base — the
-  // two are capped together at the base for the year.
-  if (box3 != null) {
-    const ssTotal = box3 + (box7 ?? 0);
-    const label = box7 ? "Box 3 + Box 7 (SS wages + tips)" : "Box 3";
-    if (year != null && SS_WAGE_BASE[year] != null) {
-      if (ssTotal > SS_WAGE_BASE[year] + 0.01) {
-        flags.push({
-          fieldKey: "box3_ss_wages",
-          severity: "error",
-          message: `${label} exceeds the ${year} Social Security wage base of $${SS_WAGE_BASE[
-            year
-          ].toLocaleString()}.`,
-        });
-      }
-    } else {
-      // Year unknown — warn against the most recent known base.
-      const latest = Math.max(...Object.values(SS_WAGE_BASE));
-      if (ssTotal > latest) {
-        flags.push({
-          fieldKey: "box3_ss_wages",
-          severity: "warn",
-          message: `${label} exceeds the highest known SS wage base ($${latest.toLocaleString()}) — tax year unknown, verify.`,
-        });
-      }
-    }
-  }
-
-  // Box 2 should be less than Box 1.
-  if (box1 != null && box2 != null && box2 >= box1 && box1 > 0) {
-    flags.push({
-      fieldKey: "box2_fed_withholding",
-      severity: "warn",
-      message: "Box 2 (withholding) is ≥ Box 1 (wages) — unusual, verify.",
-    });
-  }
-
-  // Box 16 ≤ Box 1 (+ tolerance) — warn only; multi-state W-2s legitimately differ.
-  if (box1 != null && box16 != null && box16 > box1 * 1.01 + 2) {
-    flags.push({
-      fieldKey: "box16_state_wages",
-      severity: "warn",
-      message:
-        "Box 16 (state wages) exceeds Box 1 (federal wages) — can be legitimate on multi-state W-2s, verify.",
-    });
-  }
-
-  // State income tax (Box 17) shouldn't meet or exceed state wages (Box 16).
-  if (box16 != null && box17 != null && box16 > 0 && box17 >= box16) {
-    flags.push({
-      fieldKey: "box17_state_tax",
-      severity: "warn",
-      message: "Box 17 (state tax) is ≥ Box 16 (state wages) — unusual, verify.",
-    });
-  }
-
-  // Local income tax (Box 19) shouldn't meet or exceed local wages (Box 18).
-  if (box18 != null && box19 != null && box18 > 0 && box19 >= box18) {
-    flags.push({
-      fieldKey: "box19_local_tax",
-      severity: "warn",
-      message: "Box 19 (local tax) is ≥ Box 18 (local wages) — unusual, verify.",
-    });
-  }
-
-  return flags;
-}
-
-// 1099-DIV: qualified dividends (Box 1b) are a subset of ordinary dividends
-// (Box 1a), so 1b can never exceed 1a.
-function form1099DivRules(fields: ExtractedField[]): ValidationFlag[] {
-  const flags: ValidationFlag[] = [];
-  const vals = valueMap(fields);
-  const box1a = parseMoney(vals["box1a_ordinary_div"]);
-  const box1b = parseMoney(vals["box1b_qualified_div"]);
-  if (box1a != null && box1b != null && box1b > box1a + 0.01) {
-    flags.push({
-      fieldKey: "box1b_qualified_div",
-      severity: "error",
-      message:
-        "Box 1b (qualified dividends) cannot exceed Box 1a (total ordinary dividends) — qualified is a subset of ordinary.",
-    });
-  }
-  return flags;
-}
-
-function form1099RRules(fields: ExtractedField[]): ValidationFlag[] {
-  const flags: ValidationFlag[] = [];
-  const vals = valueMap(fields);
-  const box1 = parseMoney(vals["box1_gross_distribution"]);
-  const box2a = parseMoney(vals["box2a_taxable_amount"]);
-  const code = vals["box7_distribution_code"];
-
-  if (box1 != null && box2a != null && box2a > box1 + 0.01) {
-    flags.push({
-      fieldKey: "box2a_taxable_amount",
-      severity: "error",
-      message: "Box 2a (taxable amount) cannot exceed Box 1 (gross distribution).",
-    });
-  }
-
-  if (code && !isValidDistributionCode(code)) {
-    flags.push({
-      fieldKey: "box7_distribution_code",
-      severity: "error",
-      message: `"${code}" is not a valid IRS distribution code.`,
-    });
-  }
-
-  return flags;
-}
-
-// All 1099s: federal withholding should be < 50% of the largest income box (warn).
-const INCOME_BOXES_1099: Record<string, string[]> = {
-  "1099-NEC": ["box1_nonemployee_comp"],
-  "1099-INT": ["box1_interest", "box3_treasury_interest", "box8_tax_exempt"],
-  "1099-DIV": ["box1a_ordinary_div", "box2a_capital_gain"],
-  "1099-R": ["box1_gross_distribution"],
-  "1099-MISC": ["box1_rents", "box2_royalties", "box3_other_income"],
-};
-
-function withholdingRule(
-  formType: FormType,
-  fields: ExtractedField[],
-): ValidationFlag[] {
-  const incomeKeys = INCOME_BOXES_1099[formType];
-  if (!incomeKeys) return [];
-  const vals = valueMap(fields);
-  const withholding = parseMoney(vals["box4_fed_withholding"]);
-  if (withholding == null || withholding <= 0) return [];
-  const incomes = incomeKeys
-    .map((k) => parseMoney(vals[k]))
-    .filter((n): n is number => n != null);
-  if (incomes.length === 0) return [];
-  const largest = Math.max(...incomes);
-  if (largest > 0 && withholding > largest * 0.5) {
-    return [
-      {
-        fieldKey: "box4_fed_withholding",
-        severity: "warn",
-        message:
-          "Federal withholding is over 50% of the largest income box — unusual, verify.",
-      },
-    ];
-  }
-  return [];
-}
-
-// ---- entry point -----------------------------------------------------------
-
-/**
- * Run every applicable rule for a document and return a de-duplicated flag list.
- * Pure: same inputs always produce the same flags.
- */
-export function validateDocument(
-  formType: FormType,
-  fields: ExtractedField[],
-): ValidationFlag[] {
-  const schema = getSchema(formType);
-  const flags: ValidationFlag[] = [];
-
-  if (formType !== "UNKNOWN") {
-    flags.push(...formatRules(fields, schema));
-    flags.push(...referenceRules(fields, schema));
-    flags.push(...requiredRules(fields, schema));
-  }
-  flags.push(...confidenceRules(fields));
-
-  if (formType === "W-2") flags.push(...w2ArithmeticRules(fields));
-  if (formType === "1099-R") flags.push(...form1099RRules(fields));
-  if (formType === "1099-DIV") flags.push(...form1099DivRules(fields));
-  flags.push(...withholdingRule(formType, fields));
-
-  // De-dupe identical (fieldKey, severity, message) triples.
-  const seen = new Set<string>();
-  const deduped: ValidationFlag[] = [];
-  for (const f of flags) {
-    const k = `${f.fieldKey}|${f.severity}|${f.message}`;
-    if (!seen.has(k)) {
-      seen.add(k);
-      deduped.push(f);
-    }
-  }
-  return deduped;
-}
-
-/** Derive document status from its flags (does not account for confirmation). */
-export function statusFromFlags(
-  flags: ValidationFlag[],
-): "needs_review" | "verify_flagged" | "clean" {
-  if (flags.some((f) => f.severity === "error")) return "needs_review";
-  if (flags.some((f) => f.severity === "warn")) return "verify_flagged";
-  return "clean";
-}
+export function statusFromFlags(flags: ValidationFlag[]): "needs_review" | "verify_flagged" | "clean" { if(flags.some(f=>f.severity==="error"))return "needs_review"; if(flags.some(f=>f.severity==="warn"))return "verify_flagged"; return "clean"; }

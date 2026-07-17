@@ -1,15 +1,20 @@
 "use client";
 
-import { useCallback, useReducer, useRef, useState } from "react";
+import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 import { initialState, reducer } from "@/lib/reducer";
 import { runOcr, OcrError } from "@/lib/ocr";
 import { Semaphore } from "@/lib/semaphore";
+import { subscribeRules } from "@/lib/rules";
 import type { ExtractionResult, IntakeDoc } from "@/lib/types";
 import { TopBar } from "./TopBar";
 import { DropZone } from "./DropZone";
 import { DocumentQueue } from "./DocumentQueue";
 import { ReviewWorkspace } from "./ReviewWorkspace";
 import { BottomBar } from "./BottomBar";
+import { validateBatch } from "@/lib/validate";
+import { WelcomeModal } from "./WelcomeModal";
+import { redactSSNsInOcrText } from "@/lib/privacy";
+import { RulesModal } from "./RulesModal";
 
 // Bundled synthetic sample documents. The "Try sample documents" button fetches
 // these and runs them through the real OCR → extraction pipeline — no faked
@@ -19,6 +24,8 @@ const SAMPLE_FILES = [
   "w2-box4-error.png",
   "1099-nec.png",
   "1099-int.png",
+  "ssa-1099-sample.svg",
+  "charitable-receipt-letter.svg",
 ];
 
 function newDoc(file: File): IntakeDoc {
@@ -40,10 +47,25 @@ export function IntakeApp() {
   const [state, dispatch] = useReducer(reducer, initialState);
   const [loadingSamples, setLoadingSamples] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [rulesOpen, setRulesOpen] = useState(false);
 
-  // DECISION: uploads process concurrently, but Groq calls are capped at 2 to
-  // stay under free-tier rate limits while keeping the UI responsive for a batch.
-  const groqGate = useRef(new Semaphore(2));
+  // When the preparer toggles validation rules, re-derive every document's flags
+  // and status so the UI reflects the change immediately.
+  useEffect(
+    () => subscribeRules(() => dispatch({ type: "REVALIDATE_ALL" })),
+    [],
+  );
+
+  // Normalize fields and refresh persisted in-memory flags after a hot reload
+  // or updated validation rule, including newly accepted masked SSNs.
+  useEffect(() => {
+    dispatch({ type: "REVALIDATE_ALL" });
+  }, []);
+
+  // DECISION: free-tier Groq quotas are easily exhausted by parallel tax-form
+  // prompts. OCR can continue concurrently, but extraction is intentionally
+  // serialized so a batch does not turn one retry window into many failures.
+  const groqGate = useRef(new Semaphore(1));
   // Keep original File objects so "retry" can re-run OCR if needed.
   const fileStore = useRef<Map<string, File>>(new Map());
 
@@ -55,7 +77,7 @@ export function IntakeApp() {
         const res = await fetch("/api/extract", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ ocrText, fileName }),
+          body: JSON.stringify({ ocrText: redactSSNsInOcrText(ocrText), fileName }),
         });
         if (!res.ok) {
           const body = await res.json().catch(() => ({}));
@@ -143,7 +165,7 @@ export function IntakeApp() {
         SAMPLE_FILES.map(async (name) => {
           const res = await fetch(`/samples/${name}`);
           const blob = await res.blob();
-          return new File([blob], name, { type: "image/png" });
+          return new File([blob], name, { type: blob.type || "image/png" });
         }),
       );
       addFiles(files);
@@ -161,12 +183,15 @@ export function IntakeApp() {
 
   const selected =
     state.docs.find((d) => d.id === state.selectedId) ?? null;
+  const batchFlags = validateBatch(state.docs);
 
   // Empty state ---------------------------------------------------------------
   if (state.docs.length === 0) {
     return (
       <div className="flex h-dvh flex-col">
-        <TopBar />
+        <TopBar onOpenRules={() => setRulesOpen(true)} />
+        <WelcomeModal />
+        <RulesModal open={rulesOpen} onClose={() => setRulesOpen(false)} />
         <main className="flex-1 overflow-auto">
           <DropZone
             onFiles={addFiles}
@@ -181,7 +206,9 @@ export function IntakeApp() {
   // Working state -------------------------------------------------------------
   return (
     <div className="flex h-dvh flex-col">
-      <TopBar />
+      <TopBar onOpenRules={() => setRulesOpen(true)} />
+      <WelcomeModal />
+      <RulesModal open={rulesOpen} onClose={() => setRulesOpen(false)} />
 
       <div className="flex min-h-0 flex-1">
         {/* sidebar — persistent on md+, drawer on mobile */}
@@ -257,7 +284,7 @@ export function IntakeApp() {
         </main>
       </div>
 
-      <BottomBar docs={state.docs} />
+      <BottomBar docs={state.docs} flags={batchFlags} onSelectDoc={selectDoc} />
     </div>
   );
 }

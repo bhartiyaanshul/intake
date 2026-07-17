@@ -8,7 +8,15 @@ export type FormType =
   | "1099-R"
   | "1099-MISC"
   | "1098"
+  | "1099-G"
+  | "SSA-1099"
+  | "K-1"
+  | "1098-E"
+  | "1098-T"
+  | "CHARITABLE_RECEIPT"
   | "UNKNOWN";
+
+export type K1Variant = "1065" | "1120-S" | "1041";
 
 export type FieldType =
   | "text"
@@ -17,7 +25,9 @@ export type FieldType =
   | "ein"
   | "state"
   | "code"
-  | "year";
+  | "year"
+  | "boolean"
+  | "percent";
 
 export interface FieldDef {
   key: string;
@@ -36,11 +46,16 @@ export interface ExtractedField {
   edited: boolean;
 }
 
-export type Severity = "error" | "warn";
+export type Severity = "error" | "warn" | "info";
 
 export interface ValidationFlag {
   fieldKey: string;
   severity: Severity;
+  scope: "internal" | "external";
+  // Stable id of the rule that produced this flag — lets the preparer toggle
+  // individual rules on/off (see lib/rules.ts).
+  ruleId: string;
+  documents?: string[];
   message: string;
   // When a rule can compute the correct value (e.g. Box 4 = 6.2% of Box 3), it
   // supplies it here so the UI can offer a one-click fix.
@@ -50,6 +65,8 @@ export interface ValidationFlag {
 // Result the /api/extract route returns.
 export interface ExtractionResult {
   formType: FormType;
+  variant?: K1Variant;
+  provider?: "groq" | "gemini";
   fields: Record<string, { value: string | null; confidence: number }>;
   // For UNKNOWN docs the model returns arbitrary key/value pairs; those are
   // surfaced under `fields` too, with the schema built dynamically.
@@ -81,6 +98,8 @@ export interface IntakeDoc {
   ocrText: string;
   pages: PageImage[]; // rendered page previews
   formType: FormType;
+  variant?: K1Variant;
+  extractionProvider?: "groq" | "gemini";
   fields: ExtractedField[];
   flags: ValidationFlag[];
   error?: string; // populated in extract_failed state

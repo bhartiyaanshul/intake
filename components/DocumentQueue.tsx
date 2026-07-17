@@ -77,7 +77,7 @@ export function DocumentQueue({
                     </span>
                   </div>
                   <div className="flex items-center gap-2">
-                    <FormTypeChip formType={doc.formType} />
+                    <FormTypeChip formType={doc.formType} variant={doc.variant} />
                     <StatusChip status={doc.status} ocrProgress={doc.ocrProgress} />
                   </div>
                 </button>
