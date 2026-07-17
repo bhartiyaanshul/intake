@@ -124,6 +124,11 @@ export function FieldPanel({
             <span className="text-ledger">All checks passed</span>
           )}
         </div>
+        {flaggedRows.length > 0 && (
+          <span className="hidden text-[11px] text-ink/40 sm:inline">
+            <kbd className="rounded border border-hairline px-1">Enter</kbd> → next flag
+          </span>
+        )}
       </div>
 
       <div className="scroll-thin flex-1 overflow-y-auto">

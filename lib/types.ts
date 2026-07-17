@@ -42,6 +42,9 @@ export interface ValidationFlag {
   fieldKey: string;
   severity: Severity;
   message: string;
+  // When a rule can compute the correct value (e.g. Box 4 = 6.2% of Box 3), it
+  // supplies it here so the UI can offer a one-click fix.
+  suggestedValue?: string;
 }
 
 // Result the /api/extract route returns.

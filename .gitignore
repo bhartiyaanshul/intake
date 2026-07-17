@@ -29,3 +29,6 @@ next-env.d.ts
 
 # vercel
 .vercel
+
+# Tesseract language data (downloaded at runtime / by node test scripts)
+*.traineddata

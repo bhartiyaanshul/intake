@@ -41,7 +41,8 @@ export function IntakeApp() {
   const [loadingSamples, setLoadingSamples] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
 
-  // Cap concurrent Groq calls at 2. Persist across renders.
+  // DECISION: uploads process concurrently, but Groq calls are capped at 2 to
+  // stay under free-tier rate limits while keeping the UI responsive for a batch.
   const groqGate = useRef(new Semaphore(2));
   // Keep original File objects so "retry" can re-run OCR if needed.
   const fileStore = useRef<Map<string, File>>(new Map());

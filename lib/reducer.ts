@@ -162,7 +162,9 @@ export function reducer(state: State, action: Action): State {
               }
             : f,
         );
-        // Editing a confirmed doc drops confirmation — the preparer changed data.
+        // DECISION: editing a confirmed doc drops confirmation. A confirmation
+        // attests to specific values; changing one invalidates that attestation,
+        // so the preparer must re-confirm rather than silently exporting stale data.
         const wasConfirmed = d.status === "confirmed";
         const next: IntakeDoc = {
           ...d,

@@ -1,10 +1,12 @@
 // Generates synthetic sample tax documents as PNGs into public/samples/.
 // Run once at authoring time: `npm run samples` (then commit the PNGs).
 //
-// Everything here is entirely fictional — names, addresses, and TINs. SSNs use
-// the 000-xx range which is never issued by the SSA, so nothing resembles a real
-// person's identifiers. The layouts imitate real IRS form structure well enough
-// that the client-side OCR pipeline reads them like genuine scans.
+// Everything here is entirely fictional — names, addresses, and TINs. The SSNs
+// are obviously-patterned placeholders (e.g. 412-42-8817) that are structurally
+// valid so they pass the app's SSA-structure check and let the "clean" samples
+// demonstrate the green path; they don't resemble any real person's number and
+// the forms are watermarked as synthetic. The layouts imitate real IRS form
+// structure well enough that the client-side OCR pipeline reads them like scans.
 
 import { createCanvas } from "@napi-rs/canvas";
 import { writeFileSync, mkdirSync } from "node:fs";
@@ -72,7 +74,7 @@ function drawW2({ badBox4 = false } = {}) {
   text(ctx, M, 100, "Department of the Treasury — Internal Revenue Service", "15px Arial", "#444");
 
   // employee SSN + EIN row
-  box(ctx, M, 130, fullW / 2 - 10, 70, "a  Employee's social security number", "000-42-8817", { big: true });
+  box(ctx, M, 130, fullW / 2 - 10, 70, "a  Employee's social security number", "412-42-8817", { big: true });
   box(ctx, M + fullW / 2 + 10, 130, fullW / 2 - 10, 70, "b  Employer identification number (EIN)", "94-2551803", { big: true });
 
   // employer block
@@ -147,7 +149,7 @@ function draw1099NEC() {
   box(ctx, rx, 205, rw, 75, "4  Federal income tax withheld", "0.00", { big: true });
 
   box(ctx, M, 290, fullW / 2 - 10, 70, "PAYER'S TIN", "81-4455221", { big: true });
-  box(ctx, M + fullW / 2 + 10, 290, fullW / 2 - 10, 70, "RECIPIENT'S TIN", "000-73-4192", { big: true });
+  box(ctx, M + fullW / 2 + 10, 290, fullW / 2 - 10, 70, "RECIPIENT'S TIN", "512-73-4192", { big: true });
 
   box(ctx, M, 370, fullW / 2 - 10, 130, "RECIPIENT'S name and address", "");
   text(ctx, M + 14, 420, "Devon R. Okafor", "22px Arial");
@@ -186,7 +188,7 @@ function draw1099INT() {
   box(ctx, rx + rw / 2 + 5, 200, rw / 2 - 5, 70, "3  Interest on Treasury obligations", "312.00", { big: true });
 
   box(ctx, M, 290, fullW / 2 - 10, 70, "PAYER'S TIN", "31-0074562", { big: true });
-  box(ctx, M + fullW / 2 + 10, 290, fullW / 2 - 10, 70, "RECIPIENT'S TIN", "000-58-2247", { big: true });
+  box(ctx, M + fullW / 2 + 10, 290, fullW / 2 - 10, 70, "RECIPIENT'S TIN", "623-58-2247", { big: true });
 
   box(ctx, M, 370, fullW / 2 - 10, 130, "RECIPIENT'S name and address", "");
   text(ctx, M + 14, 420, "Priya N. Ramaswamy", "22px Arial");

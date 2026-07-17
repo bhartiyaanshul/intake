@@ -45,6 +45,8 @@ export const FieldRow = forwardRef<
   const rail = railColor(flags);
   const mono = MONO_TYPES.includes(type);
   const confPct = Math.round(field.confidence * 100);
+  // First flag that can compute a correct value drives the one-click fix.
+  const suggestion = flags.find((f) => f.suggestedValue)?.suggestedValue;
 
   return (
     <div className="relative flex gap-3 border-b border-hairline bg-white px-3 py-2.5 last:border-b-0">
@@ -65,12 +67,24 @@ export const FieldRow = forwardRef<
           </label>
           <div className="flex items-center gap-2">
             {field.edited && (
-              <span
-                className="rounded bg-[#e2efe7] px-1 py-px text-[10px] font-medium text-ledger"
-                title={`Original extracted: ${field.originalValue || "(empty)"}`}
-              >
-                edited
-              </span>
+              <>
+                <button
+                  type="button"
+                  onClick={() => onChange(field.originalValue)}
+                  className="text-[10px] font-medium text-ink/40 underline-offset-2 hover:text-ink hover:underline"
+                  title={`Revert to extracted value: ${
+                    field.originalValue || "(empty)"
+                  }`}
+                >
+                  revert
+                </button>
+                <span
+                  className="rounded bg-[#e2efe7] px-1 py-px text-[10px] font-medium text-ledger"
+                  title={`Original extracted: ${field.originalValue || "(empty)"}`}
+                >
+                  edited
+                </span>
+              </>
             )}
             {!field.edited && field.value.trim() !== "" && (
               <span
@@ -119,6 +133,25 @@ export const FieldRow = forwardRef<
               </li>
             ))}
           </ul>
+        )}
+
+        {suggestion != null && suggestion !== field.value && (
+          <button
+            type="button"
+            onClick={() => onChange(suggestion)}
+            className="mt-1.5 inline-flex items-center gap-1 rounded border border-ledger/40 bg-[#e2efe7] px-2 py-0.5 text-[11px] font-medium text-ledger transition hover:bg-[#d3e7db]"
+          >
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" aria-hidden>
+              <path
+                d="M5 13l4 4L19 7"
+                stroke="currentColor"
+                strokeWidth="2.4"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+            Use computed value <span className="tnum">{suggestion}</span>
+          </button>
         )}
       </div>
     </div>

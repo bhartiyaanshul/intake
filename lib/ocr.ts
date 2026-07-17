@@ -16,6 +16,9 @@ import { Semaphore } from "./semaphore";
 import type { PageImage } from "./types";
 
 export const MAX_FILE_BYTES = 15 * 1024 * 1024; // 15 MB
+// DECISION: 50 chars is the text-layer-vs-scanned threshold. A born-digital PDF
+// page yields hundreds of chars from its text layer; a scanned page yields ~0.
+// 50 cleanly separates the two while tolerating near-empty digital pages.
 const MIN_TEXT_LAYER_CHARS = 50; // below this, treat a PDF page as scanned
 const PREVIEW_SCALE = 2.0; // render scale for page previews / OCR raster
 

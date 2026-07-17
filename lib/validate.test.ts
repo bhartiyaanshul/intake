@@ -68,7 +68,7 @@ console.log("W-2 arithmetic");
 
 // Clean W-2: Box 4 = 6.2% of Box 3, Box 6 = 1.45% of Box 5.
 const cleanW2 = [
-  fld("employee_ssn", "000-11-2222"),
+  fld("employee_ssn", "412-11-2222"),
   fld("employer_ein", "12-3456789"),
   fld("employer_name", "Acme Corp"),
   fld("employee_name", "Jane Doe"),
@@ -113,7 +113,7 @@ assert(
 
 // Box 6 excess with high Medicare wages -> warn (Additional Medicare).
 const addlMedicare = [
-  fld("employee_ssn", "000-11-2222"),
+  fld("employee_ssn", "412-11-2222"),
   fld("employer_ein", "12-3456789"),
   fld("employer_name", "Acme Corp"),
   fld("employee_name", "Jane Doe"),
@@ -177,7 +177,7 @@ const r1099 = [
   fld("payer_name", "Fidelity"),
   fld("payer_tin", "12-3456789"),
   fld("recipient_name", "John Smith"),
-  fld("recipient_tin", "000-22-3333"),
+  fld("recipient_tin", "412-22-3333"),
   fld("box1_gross_distribution", "10000.00"),
   fld("box2a_taxable_amount", "10000.00"),
   fld("box7_distribution_code", "7"),
@@ -214,7 +214,7 @@ const highWithholding = [
   fld("payer_name", "Client LLC"),
   fld("payer_tin", "12-3456789"),
   fld("recipient_name", "Contractor"),
-  fld("recipient_tin", "000-33-4444"),
+  fld("recipient_tin", "412-33-4444"),
   fld("box1_nonemployee_comp", "10000.00"),
   fld("box4_fed_withholding", "6000.00"), // > 50%
   fld("tax_year", "2024"),
@@ -222,6 +222,135 @@ const highWithholding = [
 assert(
   hasFlag("1099-NEC", highWithholding, "box4_fed_withholding", "warn"),
   "withholding > 50% of income -> warn",
+);
+
+// --- external reference checks ----------------------------------------------
+console.log("external reference checks");
+
+// SSN structural validity (well-formed but impossible numbers).
+const badSsnArea = cleanW2.map((f) =>
+  f.key === "employee_ssn" ? fld("employee_ssn", "000-11-2222") : f,
+);
+assert(
+  hasFlag("W-2", badSsnArea, "employee_ssn", "warn"),
+  "SSN area 000 -> structural warn",
+);
+const ssn666 = cleanW2.map((f) =>
+  f.key === "employee_ssn" ? fld("employee_ssn", "666-11-2222") : f,
+);
+assert(
+  hasFlag("W-2", ssn666, "employee_ssn", "warn"),
+  "SSN area 666 -> structural warn",
+);
+const ssnGroup00 = cleanW2.map((f) =>
+  f.key === "employee_ssn" ? fld("employee_ssn", "412-00-2222") : f,
+);
+assert(
+  hasFlag("W-2", ssnGroup00, "employee_ssn", "warn"),
+  "SSN group 00 -> structural warn",
+);
+assert(
+  !hasFlag("W-2", cleanW2, "employee_ssn", "warn"),
+  "valid SSN structure -> no warn",
+);
+
+// EIN prefix validity.
+const badEin = cleanW2.map((f) =>
+  f.key === "employer_ein" ? fld("employer_ein", "07-1234567") : f,
+);
+assert(
+  hasFlag("W-2", badEin, "employer_ein", "warn"),
+  "unassigned EIN prefix 07 -> warn",
+);
+assert(
+  !hasFlag("W-2", cleanW2, "employer_ein", "warn"),
+  "valid EIN prefix -> no warn",
+);
+
+// State code validity.
+const badState = [...cleanW2, fld("box15_state", "ZZ")];
+assert(
+  hasFlag("W-2", badState, "box15_state", "warn"),
+  "invalid state code ZZ -> warn",
+);
+const goodState = [...cleanW2, fld("box15_state", "OR")];
+assert(
+  !hasFlag("W-2", goodState, "box15_state", "warn"),
+  "valid state code OR -> no warn",
+);
+
+// Box 12 code validity.
+const badBox12 = [...cleanW2, fld("box12", "D 6,500.00; XZ 100.00")];
+assert(
+  hasFlag("W-2", badBox12, "box12", "warn"),
+  "unrecognized Box 12 code -> warn",
+);
+const goodBox12 = [...cleanW2, fld("box12", "D 6,500.00; DD 12,340.00")];
+assert(
+  !hasFlag("W-2", goodBox12, "box12", "warn"),
+  "valid Box 12 codes D/DD -> no warn",
+);
+
+// --- new internal cross-field rules -----------------------------------------
+console.log("internal cross-field rules");
+
+// Box 5 (Medicare) < Box 3 (SS) -> warn.
+const medicareLtSs = cleanW2.map((f) =>
+  f.key === "box5_medicare_wages" ? fld("box5_medicare_wages", "40000.00") : f,
+);
+assert(
+  hasFlag("W-2", medicareLtSs, "box5_medicare_wages", "warn"),
+  "Medicare wages < SS wages -> warn",
+);
+
+// Suggested value on the Box 4 error.
+const box4flags = validateDocument("W-2", badBox4).filter(
+  (f) => f.fieldKey === "box4_ss_tax" && f.severity === "error",
+);
+assert(
+  box4flags[0]?.suggestedValue === "3,100.00",
+  "Box 4 error carries suggested value 3,100.00",
+);
+
+// 1099-DIV: qualified > ordinary -> error.
+const div = [
+  fld("payer_name", "Vanguard"),
+  fld("payer_tin", "12-3456789"),
+  fld("recipient_name", "Investor"),
+  fld("recipient_tin", "412-55-6666"),
+  fld("box1a_ordinary_div", "1000.00"),
+  fld("box1b_qualified_div", "1500.00"), // > 1a
+  fld("tax_year", "2024"),
+];
+assert(
+  hasFlag("1099-DIV", div, "box1b_qualified_div", "error"),
+  "1099-DIV qualified > ordinary -> error",
+);
+const divOk = div.map((f) =>
+  f.key === "box1b_qualified_div" ? fld("box1b_qualified_div", "800.00") : f,
+);
+assert(
+  !hasFlag("1099-DIV", divOk, "box1b_qualified_div", "error"),
+  "1099-DIV qualified <= ordinary -> no error",
+);
+
+// SS wages + tips over the wage base -> error.
+const tipsOverBase = [
+  fld("employee_ssn", "412-11-2222"),
+  fld("employer_ein", "12-3456789"),
+  fld("employer_name", "Acme"),
+  fld("employee_name", "Jane"),
+  fld("box1_wages", "170000.00"),
+  fld("box3_ss_wages", "168000.00"),
+  fld("box7_ss_tips", "2000.00"), // 168000 + 2000 = 170000 > 168600 (2024)
+  fld("box4_ss_tax", "10540.00"), // 6.2% of 170000
+  fld("box5_medicare_wages", "170000.00"),
+  fld("box6_medicare_tax", "2465.00"), // 1.45% of 170000
+  fld("tax_year", "2024"),
+];
+assert(
+  hasFlag("W-2", tipsOverBase, "box3_ss_wages", "error"),
+  "SS wages + tips over wage base -> error",
 );
 
 // --- summary ----------------------------------------------------------------
